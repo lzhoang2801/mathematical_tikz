@@ -1,0 +1,4 @@
+interface:
+  display_name: "Synthetic TikZ Data"
+  short_description: "Prepare substantial geometry Generate/Edit datasets"
+  default_prompt: "Use $synthetic-tikz to prepare a bounded Generate and Edit batch from the local geometry sources, following dataset/CONVENTIONS.md and saving JSONL under dataset/."
