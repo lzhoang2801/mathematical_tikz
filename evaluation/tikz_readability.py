@@ -9,7 +9,6 @@ No source-TikZ parsing or font parser is involved.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from collections import Counter
 from itertools import pairwise
 from typing import Any
 
@@ -335,109 +334,37 @@ def attach_glyph_ink(
 
 
 def inspect_readability(scene: dict[str, Any]) -> dict[str, Any]:
-    """Screen text against painted strokes and other text in a PDF scene."""
-    painted_strokes = unary_union(
-        [stroke["geometry"].buffer(stroke["width"] / 2) for stroke in scene["strokes"]]
-    )
-    collisions, collision_evidence, clipped = [], [], []
-    glyph_overlaps, overlaps = [], []
+    """One readability unit per emitted text label; count each damaged label once."""
+    painted_strokes = unary_union([stroke["geometry"].buffer(stroke["width"] / 2) for stroke in scene["strokes"]])
     page = box(*scene["bounds"])
-    label_inks = []
-    resolved_labels, resolved_ink_area, collision_ink_area = 0, 0.0, 0.0
+    labels, inks, resolved = [], [], []
     for label in scene["text"]:
         glyphs = label.get("glyphs", [])
-        resolved = all("ink" in glyph for glyph in glyphs) and bool(glyphs)
-        ink = (
-            unary_union([glyph["ink"] for glyph in glyphs])
-            if resolved
-            else box(*label["bbox"]).buffer(-0.6)
-        )
-        label_inks.append(ink)
+        known = bool(glyphs) and all("ink" in glyph for glyph in glyphs)
+        ink = unary_union([glyph["ink"] for glyph in glyphs]) if known else box(*label["bbox"]).buffer(-0.6)
+        row = {"text": label["text"], "status": "pass" if known and not scene.get("unsupported") else "unknown", "issues": []}
         intersection = ink.intersection(painted_strokes)
-        if resolved:
-            resolved_labels += 1
-            resolved_ink_area += ink.area
-            collision_ink_area += intersection.area
         if intersection.area > 0.02:
-            collisions.append(label["text"])
-            collision_evidence.append(
-                {
-                    "text": label["text"],
-                    "intersection_area_pdf_pt2": intersection.area,
-                    "label_ink_area_pdf_pt2": ink.area,
-                    "basis": "font_outline" if resolved else "bbox_fallback",
-                    "glyph_evidence": [glyph.get("evidence_id") for glyph in glyphs],
-                }
-            )
+            row["issues"].append({"kind": "stroke_collision", "area_pdf_pt2": intersection.area,
+                                  "basis": "font_outline" if known else "bbox_fallback"})
         if not page.covers(ink):
-            clipped.append(label["text"])
+            row["issues"].append({"kind": "clipped"})
         for index, first in enumerate(glyphs):
-            for second in glyphs[index + 1 :]:
-                a = first.get("ink", box(*first["bbox"]))
-                b = second.get("ink", box(*second["bbox"]))
-                if a.intersection(b).area > 0.02:
-                    glyph_overlaps.append(
-                        {"text": label["text"], "characters": [first["text"], second["text"]]}
-                    )
-    for index, first in enumerate(label_inks):
-        for other_index, second in enumerate(label_inks[index + 1 :], start=index + 1):
-            if first.intersection(second).area > 0.02:
-                overlaps.append(
-                    [scene["text"][index]["text"], scene["text"][other_index]["text"]]
-                )
-    return {
-        "glyph_overlap_candidates": glyph_overlaps,
-        "stroke_collision_candidates": collisions,
-        "stroke_collision_evidence": collision_evidence,
-        "text_overlap_candidates": overlaps,
-        "text_count": len(scene["text"]),
-        "resolved_outline_label_count": resolved_labels,
-        "resolved_label_ink_area_pdf_pt2": resolved_ink_area,
-        "resolved_stroke_collision_area_pdf_pt2": collision_ink_area,
-        "clipped_text": clipped,
-        "outline_issues": scene["ink_issues"],
-        "approximation": "Font and stroke curves flattened to 0.08 PDF pt; 0.02 square PDF pt intersection screen; dash gaps and final compositing are not certified",
-    }
-
-
-def compare_readability(
-    target_scene: dict[str, Any], output_scene: dict[str, Any]
-) -> dict[str, Any]:
-    """Compare existing readability screens and retain their diagnostic fields."""
-    target = inspect_readability(target_scene)
-    output = inspect_readability(output_scene)
-    new_collisions = list(
-        (Counter(output["stroke_collision_candidates"])
-         - Counter(target["stroke_collision_candidates"])).elements()
-    )
-    status = (
-        "review"
-        if new_collisions
-        or len(output["glyph_overlap_candidates"]) > len(target["glyph_overlap_candidates"])
-        or len(output["text_overlap_candidates"]) > len(target["text_overlap_candidates"])
-        or output["clipped_text"]
-        else "unknown"
-        if target["outline_issues"] or output["outline_issues"]
-        else "no_new_warning"
-    )
-    ink_area = output["resolved_label_ink_area_pdf_pt2"]
-    output_status = (
-        "review" if output["stroke_collision_candidates"] or output["glyph_overlap_candidates"]
-        or output["text_overlap_candidates"] or output["clipped_text"] else
-        "unknown" if output["outline_issues"] or output_scene.get("unsupported") else "match"
-    )
-    collision_ink_pct = (
-        100 * output["resolved_stroke_collision_area_pdf_pt2"] / ink_area
-        if ink_area
-        else None
-    )
-    return {
-        "status": status,
-        "output_status": output_status,
-        "target": target,
-        "output": output,
-        "new_stroke_collision_candidates": new_collisions,
-        "collision_ink_pct": collision_ink_pct,
-        "collision_measurement_complete": not output["outline_issues"] and not output_scene.get("unsupported"),
-        "meaning": "Output-only geometric collision screen; status/new candidates describe change from target, not absolute readability; dash gaps, fills and final compositing are unmeasured",
-    }
+            for second in glyphs[index + 1:]:
+                if "ink" in first and "ink" in second and first["ink"].intersection(second["ink"]).area > 0.02:
+                    row["issues"].append({"kind": "glyph_overlap", "characters": [first["text"], second["text"]]})
+        if known and row["issues"]:
+            row["status"] = "fail"
+        labels.append(row)
+        inks.append(ink)
+        resolved.append(known)
+    for index, first in enumerate(inks):
+        for other in range(index + 1, len(inks)):
+            if first.intersection(inks[other]).area > 0.02:
+                for a, b in ((index, other), (other, index)):
+                    labels[a]["issues"].append({"kind": "text_overlap", "other_label": b})
+                    if resolved[a] and resolved[b]:
+                        labels[a]["status"] = "fail"
+                    elif labels[a]["status"] != "fail":
+                        labels[a]["status"] = "unknown"
+    return {"labels": labels, "outline_issues": scene["ink_issues"], "unsupported": scene.get("unsupported", [])}

@@ -1,0 +1,298 @@
+{
+  "protocol": "straight-stroke-subchecks-v1",
+  "author": "Codex assistant, derived from frozen instructions",
+  "cases": [
+    {
+      "id": "bai-01",
+      "candidate_sha256": "9c60537044e5722681d6b1320bd1086868e60fb2742ea1c1f0864c35b756b908",
+      "criterion_id": "labels-segments-circle",
+      "required_segments": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "C",
+          "A"
+        ],
+        [
+          "A",
+          "H"
+        ],
+        [
+          "D",
+          "E"
+        ],
+        [
+          "H",
+          "E"
+        ],
+        [
+          "C",
+          "D"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "bai-02",
+      "candidate_sha256": "13bae6a392c58a34b12ec1c987ef0275b13193d751a6d01f30a2546d78f65b78",
+      "criterion_id": "labels-segments-circle",
+      "required_segments": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "C",
+          "D"
+        ],
+        [
+          "D",
+          "A"
+        ],
+        [
+          "B",
+          "E"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "bai-03",
+      "candidate_sha256": "05aac27b609f01ff28f8e014525d85b9a004274f8ddfab133b335049b11579fb",
+      "criterion_id": "labels-segments-circle-ray",
+      "required_segments": [
+        [
+          "O",
+          "A"
+        ],
+        [
+          "A",
+          "B"
+        ],
+        [
+          "O",
+          "B"
+        ],
+        [
+          "A",
+          "C"
+        ],
+        [
+          "O",
+          "C"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "O",
+          "H"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "bai-04",
+      "candidate_sha256": "bce02a074597160cd93096628b75c45c706cad215363eab7526ab013b826c56f",
+      "criterion_id": "required-objects-and-scope",
+      "required_segments": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "A",
+          "M"
+        ],
+        [
+          "O",
+          "M"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "bai-05",
+      "candidate_sha256": "3a5fbd1393acec4c2d67e3e707785b58a64dae915d1c9e29f8ef670a3f1612e1",
+      "criterion_id": "required-objects-and-scope",
+      "required_segments": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "O",
+          "C"
+        ],
+        [
+          "C",
+          "H"
+        ],
+        [
+          "D",
+          "E"
+        ],
+        [
+          "M",
+          "I"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "bai-06",
+      "candidate_sha256": "8d4ca67b7cc04826af4b628a68ebba79f8be51b8477069b49288d99972f767bd",
+      "criterion_id": "required-objects-and-scope",
+      "required_segments": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "A",
+          "C"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "O",
+          "D"
+        ],
+        [
+          "B",
+          "D"
+        ],
+        [
+          "A",
+          "D"
+        ],
+        [
+          "O",
+          "C"
+        ],
+        [
+          "D",
+          "C"
+        ],
+        [
+          "B",
+          "I"
+        ],
+        [
+          "A",
+          "F"
+        ],
+        [
+          "B",
+          "M"
+        ],
+        [
+          "M",
+          "C"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "user-tangents-01",
+      "candidate_sha256": "1252911adc16af6140098f5b793a67387b21ecd18816b0175a8a6e4dd737964a",
+      "criterion_id": "coverage_objects",
+      "required_segments": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "A",
+          "C"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "O",
+          "A"
+        ],
+        [
+          "P",
+          "Q"
+        ],
+        [
+          "O",
+          "B"
+        ],
+        [
+          "O",
+          "C"
+        ],
+        [
+          "O",
+          "K"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    },
+    {
+      "id": "user-tangents-02",
+      "candidate_sha256": "969c0bb816987b2ac0852e9da94316f1b45a4b2b8d7d0367da3d69fbfaeb84d9",
+      "criterion_id": "coverage_objects",
+      "required_segments": [
+        [
+          "O",
+          "A"
+        ],
+        [
+          "O",
+          "B"
+        ],
+        [
+          "A",
+          "B"
+        ],
+        [
+          "B",
+          "C"
+        ],
+        [
+          "O",
+          "C"
+        ],
+        [
+          "C",
+          "F"
+        ],
+        [
+          "I",
+          "A"
+        ],
+        [
+          "I",
+          "B"
+        ],
+        [
+          "I",
+          "C"
+        ]
+      ],
+      "basis": "Minimum straight segments explicitly selected by the frozen instruction; no claim to cover circles, ray extent, labels, extra-object scope or readability."
+    }
+  ]
+}

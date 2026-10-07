@@ -1,8 +1,30 @@
 # Synthetic geometry data: Generate and Edit
 
-Contract version: `synthetic-tikz:v1`.
+Contract version: `synthetic-tikz:v2`.
 
-This is the operational reference for new Generate and Edit batches in this repository. It defines authoring and record conventions; it does not claim that the older preparation scripts already implement them. The local skill is [synthetic-tikz](../.agents/skills/synthetic-tikz/SKILL.md). Existing source files and historical experiments remain unchanged.
+These conventions cover source selection, mathematical instructions and target preparation. The local skill is [synthetic-tikz](../.agents/skills/synthetic-tikz/SKILL.md).
+
+## Instruction generation through CPA
+
+Use [tools/generate_instruction.py](../tools/generate_instruction.py) to supply the repository-local skill, its mathematical strategy and audited source context directly to the configured CPA model. Each bounded context produces one structured response; no autonomous browsing, management-format conversion or automatic refill loop is needed. This follows the supported [LangChain structured-output interface](https://docs.langchain.com/oss/python/langchain/models#structured-output), verified against the installed `langchain-openai` source.
+
+The runner writes `instructions.jsonl` for supervised candidates, `generate-inputs.jsonl` for Generate caller rows, and `edit-inputs.jsonl` only for rows with actual checked starting code. It retains full requests, raw replies, parsing/rejection diagnostics, usage, model identity, source hashes and LangSmith trace IDs per batch/attempt. `--prepare-only` exposes the exact contexts before calls. Source IDs are allowlisted; original locators, IDs and family joins are assigned by application code.
+
+From the repository root, a bounded eight-call run is:
+
+```powershell
+& ../mathmath/.venv/Scripts/python.exe tools/generate_instruction.py --output dataset/cpa-instructions --calls 8 --rows-per-call 24 --workers 4
+```
+
+This requests at most 192 candidates, split evenly between tasks. Add `--prepare-only` to inspect context first; repeat the same command with `--resume` to skip completed calls and retry failed calls once. The system context includes the documented `G01-G17` classification definitions. Mathematical review remains an instruction-stage decision: the two traced pilots in `dataset/cpa-instructions-pilot-20261007*` retained impossible segment intersections despite valid schemas; their `supervision.json` files identify the held drafts. Never treat schema checks or model notes as mathematical acceptance.
+
+Optional `supervision.json` records `rows` with an existing `id`, `decision` (`usable_instruction` or `needs_revision`) and concrete `reason`. On snapshot/resume, marked `needs_revision` cases and their exact duplicates stay in the proposal archive but are excluded from caller inputs. An unreviewed instruction remains a candidate; an instruction review never approves a missing target or Edit starting diagram.
+
+For the current Auxiliary Line batch, Edit is a purposeful auxiliary addition to existing geometry. Numeric/relation replacements, removals, labels and colour edits are excluded. Generate may retain original source measurements, but changing measurements alone is not a new case. The instruction runner screens number/point-name substitutions, reports `number_or_label_variants`, supplies prior source-scoped cases with `--existing`, and rejects repeated screened cases. This conservative text screen does not establish semantic uniqueness or mathematical validity; equivalent phrasing/definitions still need review.
+
+After recording review, use the same `--output` with `--review-only` to refresh caller inputs without any model call. This uses the saved source snapshot and retains all raw batches.
+
+An Edit draft stores its complete `starting_givens` in offline provenance. `--bases` accepts caller-checked Generate records and copies an unambiguously matching actual `target_tikz` into `current_tikz`. Drafts awaiting code remain outside Edit caller inputs. Deterministic schema, scope, source-parent, boilerplate and exact-duplicate checks do not certify mathematical validity. Inspect source facts, branches, purposeful augmentation and semantic duplicates before treating proposals as usable instructions. Keep targets/rubrics out of instruction-model context.
 
 ## 1. Source selection
 
@@ -42,13 +64,15 @@ Use concise Vietnamese mathematical statements and standard notation. State the 
 
 - Define every named object and preserve distinctions between a segment, ray, supporting line, chord, minor/major arc and projected spatial object.
 - Preserve inequalities, units, nondegeneracy, order, inside/outside conditions and intersection branches. State a second intersection as distinct from the already known one when that interpretation is verified.
-- Remove proof questions, calculation requests, textbook scaffolding and references such as “the figure above.” Keep the source statement intact in provenance.
+- Remove proof questions, calculation requests, textbook scaffolding and references such as “the figure above.” Keep the source link concise; do not copy the full source statement into each record.
 - Keep necessary mathematical construction definitions: “`H` is the foot of the altitude from `A` to `BC`” and “`E` is the second intersection of `AD` with `(O)`” are valid givens for drawing.
-- Exclude sequential drawing recipes: "place `H` here, then connect these points." This concerns drawing implementation, not mathematical construction definitions or particular verbs: "draw altitude `AH`" and "add segment `AK`" can identify required objects. Do not introduce a coordinate frame, special angle, numerical ratio or orientation merely because the target uses it internally.
-- A short visibility clause is allowed when needed to select an auxiliary, segment, measurement, arc or line role. Name the required mathematical objects without prescribing point placement or drawing order. A statement such as "include the circumcircle of `CDE`" defines scope without specifying a drawing algorithm.
+- Exclude sequential drawing recipes: "place `H` here, then connect these points." Keep mathematical definitions such as an altitude or the circumcircle of `CDE`, without prescribing point placement or drawing order. Do not introduce a coordinate frame, special angle, numerical ratio or orientation merely because the target uses it internally.
+- Do not append generic visibility inventories such as “Các đoạn ... thuộc hình” or “Hình gồm ...”. State purposeful auxiliary objects through their mathematical definitions and roles. Omit redundant visibility prose; do not replace it with another stock sentence or a mathematical role unsupported by the selected givens.
 - Do not add “draw accurately/beautifully/clearly” boilerplate, TikZ implementation instructions, source IDs, rubric details or evaluation terminology to model inputs.
 
 If the givens leave geometric freedom, keep that freedom. A target is one valid realization. Sample valid free parameters for varied targets and record them as layout choices; do not promote them to source givens. Reference-distance disagreement alone can reject another valid realization, so it must not be treated as proof of instruction failure.
+
+Presentation can vary after the mathematical case is fixed. Sample one concise phrasing per case, reorder only independent clauses whose prerequisites have been introduced, and vary clause grouping or equivalent natural/symbolic definitions. Preserve correspondence lists, angle vertices/direction, ratio operand order, units, inequalities and branches. Repeated standard terms are acceptable; redundant facts and unusual synonyms are not a diversity strategy. Record sampling seeds/choices outside model inputs. Review exact and semantic duplicates separately from presentation variety; a paraphrase is not a new mathematical case.
 
 ### Generate example
 
@@ -68,25 +92,25 @@ Do not append the proof conclusion that `D,B,M,C` are concyclic as an assumed co
 
 When the actual `current_tikz` contains `ABC`, altitude `AH` and their labels:
 
-> Thêm I là trung điểm AH, K là trung điểm HB cùng các đoạn IK, AK, CI. Giữ nguyên tam giác ABC và đường cao AH.
+> I, K là trung điểm AH, HB.
 
-The input is that instruction plus the complete starting TikZ. The output is the complete updated TikZ. An edit must change the geometry/content requested, preserve unaffected objects and recompute dependencies affected by a changed given. Keep the existing frame unless changing it is part of the request. A mathematical repair may start from compiling but incorrect geometry; record the introduced error and requested correction.
+The input is that instruction plus the complete starting TikZ. The output is the complete updated TikZ. Edit instructions state only the mathematical change: additions use direct definitions, without “Bổ sung/Thêm” prefixes or “Giữ nguyên ...” lists. Include existing facts only when needed to disambiguate a replacement/removal. Preserving unaffected objects, recomputing affected dependencies and keeping the existing frame are default behavior. A mathematical repair may start from compiling but incorrect geometry; record the introduced error and requested correction.
 
-Prefer varied meaningful edits: add/remove a coherent construction, change a stated parameter, replace a defining relation, or correct a specific mathematical defect. Do not fill a batch with no-op edits, label renaming, colour changes or the same “add a midpoint” operation.
+Prefer varied purposeful auxiliary additions: projections/heights, medians/midsegments, parallels, bisectors, reflection carriers, radii/contact lines and explicitly branched intersections. Point-only padding, no-op edits, measurement changes, label renaming, colour changes and repeated "add a midpoint" templates do not count.
 
 ## 3. Target TikZ has one authority
 
 Read the actual [TikZ harness prompt](../../mathmath/src/agent/prompts/tikz.py) at batch start. Pin its `TIKZ_PROMPT_VERSION` and SHA-256, together with the applicable [task prompt](../../mathmath/src/agent/prompts/problem_tikz.py) and [validator/wrapper](../../mathmath/src/agent/latex/tikz.py). Do not use `new_instruction.md` or copied historical prompt text as a second authority. A source-profile change starts a new batch/profile revision.
 
-Follow the prompt's full source contract. The essential envelope is one ordinary `tikzpicture`, without Markdown, preamble, document wrapper or comments. Its four source groups are independent parameters, dependent constructions/helpers, visible strokes/annotations, then point markers/labels. Keep constrained points expressed through named dependencies; keep undrawn helpers out of the bounding box; use the prompt's point/mark batching and geometric label placement.
+Follow the prompt's full source contract. The essential envelope is one ordinary `tikzpicture`, without Markdown, preamble, document wrapper or comments. Its four source groups are independent parameters, dependent constructions/helpers, visible strokes/annotations, then point markers/labels. Keep constrained points expressed through named dependencies; keep undrawn helpers out of the bounding box; follow the prompt's guidance for choosing and inspecting label positions.
 
-Preserve ratios. Numerical givens do not force physical centimetres on the canvas. Follow the prompt's shared reference-length normalization, with its explicit exceptions for coordinate systems, physical-size requests and existing edit frames. Source givens and dimensionless ratios remain unchanged.
+Preserve given lengths and ratios. Use the shared prompt's default coordinate units and natural visible bounds, with one uniform picture-level scale when a requested size or readability needs adjustment. Preserve supplied coordinate-system values, measurement labels and existing edit frames.
 
 Use only the existing wrapper's supported commands/libraries. Supplied `.tex` files and `mathmath.sty` are source documents, not extra dependencies to ship with a target. Convert useful constructions to the shared target format and record repairs. A supplied diagram is not an approved target until it matches the chosen instruction and has been validated and inspected.
 
 Apply the entire `Relation marks` section of the prompt when producing the target: matching ticks for equal-segment classes, matching arc counts for equal-angle classes including angle-bisector halves, corners for perpendicularity/right angles, and requested angle text attached to its angle pic. Required relations must hold geometrically and carry the prescribed visible marks. Use the canonical prompt for carrier selection, equality-class patterns, intended angle sectors and implementation. Do not turn every property of a named shape or an unproved conclusion into a compulsory mark. Add numerical measurements only when requested. These are shared drawing conventions; instructions need not repeat symbol-placement commands for their mathematical givens.
 
-Inspect the actual render for every applicable mark: presence, correct carrier/vertex and angle sector, consistent patterns within an equality class and distinct patterns for unrelated classes, attached angle text when requested, and readability. Compilation or correct coordinates alone do not satisfy these requirements. Missing, misplaced or inconsistent required marks keep the target a candidate until corrected; record the review with the existing verification evidence.
+Inspect the actual render for every applicable mark: presence, correct carrier/vertex and angle sector, consistent patterns within an equality class and distinct patterns for unrelated classes, attached angle text when requested, and readability. Compilation or correct coordinates alone do not satisfy these requirements. Missing, misplaced or inconsistent required marks keep the target a candidate until corrected; record the review separately.
 
 ## 4. Shared evaluation and pair-specific requirements
 
@@ -118,6 +142,7 @@ Supported predicates and operand order are owned by [evaluation/tikz_geometry.py
 | `equal_length`, `length_ratio`, `shorter` | `[A,B,C,D]`: compare `|AB|` and `|CD|`; `length_ratio` requires a positive finite `value = |AB|/|CD|`; `shorter` is strict. |
 | `collinear` | `[A,B,C]`. |
 | `midpoint` | `[M,A,B]`: `M` is the midpoint of `AB`. |
+| `distinct` | `[P,Q]`: explicitly require two named points to differ; unrelated coincident points remain allowed. |
 | `between` | `[P,A,B]`: `P` is strictly inside segment `AB`. |
 | `same_ray` | `[P,O,A]`: `P` lies on ray `OA` and differs from `O`. |
 | `on_circle`, `outside_circle` | `[P,O,A]`: circle centre `O`, radius `|OA|`; for membership use an independent radius witness, not `P=A`. |
@@ -128,15 +153,15 @@ Supported predicates and operand order are owned by [evaluation/tikz_geometry.py
 
 Checks use actual visible mathematical point labels, including their true primes/subscripts where supported by extraction, rather than TikZ helper variable names. Do not add visible helper labels only to satisfy a predicate. Never substitute a tautological check for a missing check.
 
-Record only conditions required by the instruction or its defining constructions, not all theorems true of the target. Shared evaluator tolerances apply; do not tune per-row tolerances after observing a failure. An empty entire list is allowed only when there is no additional pair-specific mathematical requirement, with the reason recorded in verification notes; it is not a way to omit unsupported givens.
+Record only conditions required by the instruction or its defining constructions, not all theorems true of the target. Shared evaluator tolerances apply; do not tune per-row tolerances after observing a failure. An empty entire list is allowed only when there is no additional pair-specific mathematical requirement, with the reason recorded in review notes; it is not a way to omit unsupported givens.
 
 For an unsupported mathematical requirement, retain an entry with its real `requirement` and `checks: []`, and record independent review evidence. Do not invent an operator or represent unknown as pass. Point predicates alone do not verify a painted circle, numeric-label attachment, a general angle constraint or a 3D relation. Inspect the target and record the evidence needed for those properties. Screen-space checks must not be used to certify spatial perpendicularity.
 
-The current evaluator reports unsupported entries as unknown. Manual review can establish that a training target satisfies them, but does not make the automatic evaluator support them. Likewise, prose about allowed alternative shapes does not configure the current reference comparator. Keep these limits in the verification record.
+The current evaluator reports unsupported entries as unknown. Manual review can establish that a training target satisfies them, but does not make the automatic evaluator support them. Likewise, prose about allowed alternative shapes does not configure the current reference comparator. Keep these limits in review notes.
 
 ## 5. JSONL records and output paths
 
-Write complete examples to `dataset/<batch-id>/generate.jsonl` and `dataset/<batch-id>/edit.jsonl`. Use UTF-8 without a BOM, one JSON object per physical line, a final newline, and standard JSON serialization with `ensure_ascii=False` and `allow_nan=False`. Serialize TikZ newlines/backslashes correctly; do not hand-escape or store Markdown fences.
+After the instruction stage, write complete target/rubric examples to `dataset/<batch-id>/generate.jsonl` and `dataset/<batch-id>/edit.jsonl`. These are later training/evaluation artifacts, not the instruction-stage deliverable. Use UTF-8 without a BOM, one JSON object per physical line, a final newline, and standard JSON serialization with `ensure_ascii=False` and `allow_nan=False`. Serialize TikZ newlines/backslashes correctly; do not hand-escape or store Markdown fences.
 
 Each row has these fields. Required nullable fields stay present as `null`; omitted optional source metadata must not be guessed.
 
@@ -150,28 +175,35 @@ Each row has these fields. Required nullable fields stay present as `null`; omit
 | `target_tikz` | Nonempty complete target under section 3. Incomplete generation attempts are not example rows. |
 | `grade` | Integer 6–12 when supported by the source, otherwise `null`; rows known to be outside grades 6–12 are excluded. |
 | `diagram_types` | Nonempty array of applicable geometry codes `G01`–`G17` from [the taxonomy](../docs/diagram-k12-vn.md), checked against the actual configuration. |
-| `source_group` | Persistent ID for the original problem family, shared by all copies, tasks and descendants. |
+| `source_group` | ID linking this record to its original problem family. |
 | `split` | `null` until assigned; then `train`, `validation` or `test`. A source group has exactly one assignment across all batches. Do not invent split proportions. |
 | `evaluation_rubric` | Array of entries defined in section 4. Never included in drawing-worker input. |
-| `provenance` | Source and production record defined below. |
-| `augmentation` | Parentage and controlled changes defined below. |
-| `verification` | Readiness and evidence record defined below. |
-
-`provenance` contains:
-
-- `sources`: nonempty array of `{kind, path, sha256, locator, source_text, metadata}`. `kind` is `curriculum`, `tex` or `pdf`. Preserve the original complete problem text, including its questions, before rewriting. Hash source file bytes. Repository paths are relative; external curriculum paths are absolute. For curriculum records, `path` identifies the manifest, `locator` has `record_id` and one-based `jsonl_line`, and `metadata` preserves the original record's remaining fields plus the verified corpus file path/hash. For TeX, use one-based `start_line`, `end_line` and `problem_label`; for PDF, use one-based `page_start`, `page_end`, the printed page label and section/problem label. Preserve every known duplicate-source locator and any evidence used to recover a figure-dependent fact.
-- `selection_reason`: one concrete explanation of the interacting geometry that makes the source suitable.
-- `run_id`: the batch/run identifier; `preparation_route`: `automatic`, `deterministic_repair`, `model_assisted_repair` or `assistant_curation`, reflecting the actual production route.
-- `model` and `langsmith_trace_id`: actual model/trace identifiers for real provider calls, or `null` when not applicable. `run_id` resolves to saved attempts, call settings and repairs under `runs/<batch-id>/`. Never invent a trace or call something automatic after unrecorded curation.
-- `harness_profile`: actual `tikz_prompt_version`, plus `files`, an array of `{path, sha256}` for the common prompt, task prompt and validator/wrapper. Preserve the corresponding snapshots in run artifacts so a mutable working tree cannot change the profile retrospectively.
-
-`augmentation` contains `parent_ids` (array), `operations` (ordered array), `seed` (integer or `null` when no randomized sampler was used), and `parameters` (object containing the actual changed/free values and symbol mapping). Use empty parent IDs when deriving directly from the recorded source. Empty operations mean its givens and construction scope are unchanged apart from ordinary instruction cleanup. A selected subconfiguration still records `subset`, even without an earlier dataset parent. Each operation has `type` and a concrete `change`; section 6 defines the types. Record affected mathematical facts, not just “augmented.”
-
-`verification` contains `status` (`candidate` or `ready`), `report_path` (saved evidence path or `null` before checking), `reviewed_by` (actual reviewer identity or `null`), and `notes` (array of unresolved issues, manual checks and scope/equivalence decisions). A verification report must bind the exact instruction, current TikZ, target TikZ, rubric and harness profile by hashes and retain compilation/render evidence. Missing evidence keeps a row a candidate. Do not put secrets in records or artifacts.
 
 Keep a source-decision log in `dataset/<batch-id>/selection.jsonl`, with `{source_group, source_path, source_sha256, locator, decision, reason}`. `decision` is `selected`, `skipped` or `needs_review`; an unassigned source group may be `null`. This log is an audit artifact, never a training file. Record a specific reason such as basic recognition, incomplete givens, duplicate source or conflicting evidence.
 
-Training export uses only `instruction` and, for Edit, `current_tikz` as model inputs, with `target_tikz` as the desired response. Keep provenance, rubrics and verification available offline. Export only ready rows with assigned splits; never include a target/rubric as generation context.
+Training export uses only `instruction` and, for Edit, `current_tikz` as model inputs, with `target_tikz` as the desired response. Keep rubrics available offline. Export only ready rows with assigned splits; never include a target/rubric as generation context.
+
+## Final Parquet export for Hugging Face
+
+Export the completed reviewed dataset to Parquet for Hugging Face after target verification, deduplication and source-family split assignment. Preserve the actual task inputs, target TikZ and provenance; keep rubrics/evaluation metadata outside generation inputs. PyArrow is required for drawing snapshots and export, and is pinned in [requirements.txt](../requirements.txt).
+
+The [drawing runner](../tools/draw_instruction.py) consumes explicit caller JSONL after instruction authoring, without inferring task or starting state from filenames or IDs. Copy the final instruction/source verbatim; assign `task` and `source_group` from audited decisions. Every input has `current_tikz`: `null` for Generate, complete actual starting TikZ for Edit. The caller obtains it from a checked Generate result or an existing checked diagram and copies the chosen source into the Edit record before invocation. The runner neither selects a starting diagram nor injects its original prompt. Include existing mathematical context only when needed to disambiguate the Edit; do not repeat unchanged givens. Failed attempts remain run artifacts, not completed dataset rows.
+
+Drawing may preserve a structurally valid supplied `target_tikz` without approving it. `--resume` reuses the latest completed target only for matching task, instruction, actual `current_tikz`, source and family. A failed or incomplete drawing is retried even if it returned partial TikZ. `--retry-id` explicitly redraws a selected completed target after a mathematical/visual defect is found. Each command makes at most one bounded drawing attempt per pending row; `--limit` counts pending rows. Completed targets require no model/compiler calls during reuse. This is drawing completion, not mathematical readiness.
+
+Each row's latest outcome is saved through an atomic checkpoint before returning, and `candidates.jsonl` is rebuilt as one latest row per ID. Resuming a subset preserves other saved rows. Retry attempts and each invocation's input/profile snapshots stay in separate directories. Use one process per run directory. A retry starts from the original explicit instruction/current TikZ, keeps prior attempts offline, and never promotes a failed output to Edit input automatically.
+
+Drawing supports 1–32 workers; default 4. Measure matched batches at higher concurrency using the report's elapsed time, successful new drawings per minute and failures. Each result still passes through one snapshot writer. The orchestrator follows the skill's shared strategy until 1,500 reviewed unique pairs per task; candidate completions and throughput replicas never inflate that count.
+
+The shared compiler currently admits two operations, returning HTTP 503 when busy. Drawing therefore queues compiler operations locally with `--compiler-concurrency` (1–2, default 2) while model workers remain independent. The gate precedes native HTTPX streaming because the existing compiler SDK overrides its pool timeout to three seconds. No new compiler or model-regeneration loop is introduced. Preserve the native error/checkpoint if other clients saturate the shared service; do not call a transport failure a mathematical failure. Render artifacts use a short UUID directory outside the longer case-checkpoint paths to avoid Windows path-length failures; prior attempt paths remain unchanged.
+
+The runner also atomically replaces `candidates.parquet` after every completed result, including failures. It contains one latest row per ID; retries replace that row and subset resumes retain other saved results. Per-row JSON checkpoints remain the recovery source if snapshot writing is interrupted. The single writer runs outside the drawing workers. A closed Parquet snapshot requires rewriting its accumulated rows; this is appropriate for the planned roughly 1,500 rows per task, while substantially larger runs should use fragments.
+
+`tikz_image` embeds the target PNG as `{bytes, path}` with Hugging Face Image feature metadata, following [HF's PyArrow image format](https://huggingface.co/docs/hub/datasets-pyarrow#embed-images-inside-parquet) and its [feature reader](https://github.com/huggingface/datasets/blob/main/src/datasets/features/features.py). It uses the source/PNG pair returned by the native render, with both hashes retained, or exact-target evidence from the shared compile helper. Parquet metadata also carries `target_tikz_sha256` and `tikz_image_sha256` for the embedded pair, preserving original attempt evidence separately. A changed target, changed PNG, missing file or absent binding yields a null image unless valid exact-target compile evidence is available. Final reviewed exports require a matching, valid PNG and embed its bytes; they do not depend on local image paths. Supplied unrendered targets stay candidates with null images until compiled through the shared helper. Candidate snapshots are not approval or split assignment.
+
+For this runner's final export, actual review is recorded in `verification.status: ready`, `reviewed_by`, and `reviewed_input_sha256`, computed with its `review_digest` after task, instruction, current/target TikZ, target PNG, rubric and source-family provenance are final. The digest includes the verified PNG's actual bytes hash; changing the image also invalidates the recorded review. These fields attest the recorded review; computing a digest does not perform that review. `--export` validates them and the supplied rows' family/split consistency without a model or compiler call. It also rejects an original parent occurring in different splits across tasks, even under different family names. Cross-batch family/duplicate review remains required. Final Parquet uses ordinary input/target columns and lossless JSON strings for heterogeneous offline rubric/metadata; only populated task/split files are written.
+
+The instruction runner, drawing caller and final export share the same stock-prose check. It rejects known boilerplate and bare carrier-list clauses such as `OM và ON.` or `Các đoạn BA′, CA′.`, including assistant revisions. It allows mathematical predicates such as `AB, AC vuông góc.` This is a syntax screen; it does not verify an auxiliary's role, source fidelity or semantic uniqueness.
 
 ## 6. Controlled augmentation and split integrity
 
@@ -182,13 +214,17 @@ Preserve the original source text. Build additional variants through explicit op
 | `subset` | Active construction/givens subset. | Retain all defining dependencies and a substantial drawing; remove unsupported downstream objects together. |
 | `rephrase` | Wording or a consistent symbol mapping. | Preserve mathematical meaning, branch/order, measurements and scope. |
 | `construct` | Add a mathematically defined auxiliary. | State its definition, existence/branch conditions and visible role; identify it as synthetic. |
-| `change_instance` | Stated quantities, conditions, branches or object relationships. | Record replaced/added/removed givens and revalidate the whole dependent configuration. |
+| `change_instance` | A genuinely different compatible construction/scope in Generate. | Measurements/renaming alone do not qualify; excluded from this batch's Edit task. |
 | `derive` | A consequence of active premises. | Record the rule/derivation and verify its hypotheses. One numerical realization is not proof. Do not smuggle proof goals into the original givens. |
 | `render_variant` | Valid free parameters or allowed presentation. | Preserve the active givens and target source profile. Distinguish mathematical parameter changes from layout freedom. |
 
 There is no per-source ceiling on valid variants. Each actual production run still has a declared scope and bounded call budget. Revalidate each new instance; a descendant does not inherit target approval merely from its parent.
 
+Group givens by compatible mathematical configuration and defining dependencies before augmentation. An auxiliary must serve a particular relationship or comparison in that configuration, have defined parents/carriers, exist on the intended branch, and contribute a specified visible mathematical object. Preserve supporting-line versus segment/ray distinctions and revalidate dependents after an Edit. Prefer explicit later-subpart constructions, then verified solution auxiliaries, then deliberate synthetic additions; record their origin separately from premises and proof conclusions. The [skill](../.agents/skills/synthetic-tikz/SKILL.md) provides the full-pool grouping and auxiliary-selection procedure and concrete examples.
+
 Variation should come from source families, construction subsets, branch-valid parameter choices, combinations of relations and Edit operations. Mix these according to the real selected pool; avoid a fixed sentence template or cycling a single construction throughout the batch. Record seeds and actual sampled values. Renaming points or swapping two numbers alone does not establish a diverse mathematical dataset.
+
+For Generate, semantic duplicate review compares complete givens and visible scope modulo equivalent wording/definitions, consistent symbol renaming and unit conversion. For Edit, it also compares the intended starting mathematical configuration, actual change and resulting scope; repeated edit text alone does not establish duplicate input pairs. Preserve meaningful parameter, branch and scope differences. Do not fill counts with wording changes or uniform rescaling. Audit repeated openings, clause patterns and operation concentration separately from counts of mathematical cases.
 
 All variants of an original problem remain in the same `source_group` and split, across both tasks and every batch. Join duplicate sources before assigning splits, including copies across TeX/PDF and curriculum books. Different paths, text hashes, labels or wording do not prove independent givens. Subset augmentation can create a duplicate of another family's complete givens; merge groups or withhold the cross-split duplicate. Sharing a generic premise alone does not make two problems duplicates.
 
@@ -206,6 +242,6 @@ A complete instruction/target pair starts as `candidate`. It becomes `ready` onl
 
 This readiness means a reviewed training pair. It does not turn unsupported automatic checks into passes or establish calibrated model-evaluation accuracy. Model self-reported success and target-versus-itself agreement do not establish source fidelity. Report automatic preparation, repairs and curation separately.
 
-Use the existing compiler, drawing harness and evaluation entry points. The local skill's [compile command](../.agents/skills/synthetic-tikz/SKILL.md#compile-inspect-and-finish) provides executable compilation and artifact capture for authored JSONL. It snapshots the actual harness profile, preserves inputs and source metadata, and emits candidate copies with evidence paths; it does not select sources, generate targets, certify the complete record schema or automatically approve/export training data. Its report hashes task, instruction, current/target TikZ, rubric and profile separately from later review metadata. Recompile after changing any of those bound values; review notes/readiness updates alone do not change that evidence.
+Use the existing compiler, drawing harness and evaluation entry points with explicit task inputs. The local skill's [compile helper](../.agents/skills/synthetic-tikz/scripts/compile.py) provides compilation and artifact capture for separately authored or repaired JSONL targets. It snapshots the actual harness profile, preserves inputs and source metadata, and emits candidate copies with evidence paths; it does not select sources, generate targets, certify the complete record schema or automatically approve/export training data. Its report hashes task, instruction, current/target TikZ, rubric and profile separately from later review metadata. Recompile after changing any of those bound values; review notes/readiness updates alone do not change that evidence. Instruction generation does not invoke the compiler or drawing harness.
 
 The older `tools/prepare_tikz_candidates.py` and `tools/evaluate_tikz_candidates.py` are bounded historical experiments; their old per-dimension prose rubric or compiler imports do not define this contract.

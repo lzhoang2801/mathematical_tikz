@@ -1,0 +1,10 @@
+{
+  "removed_images": [],
+  "problem_sources": {
+    "rows_checked": 885,
+    "rows_reanchored": 885,
+    "image_paths_removed": 89,
+    "missing_image_paths": 42
+  },
+  "backup": ".tmp-coverage-review/dataset-refresh-20260921T101843628567Z"
+}

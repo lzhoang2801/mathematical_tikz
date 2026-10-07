@@ -1,74 +1,120 @@
 ---
 name: synthetic-tikz
-description: Prepare source-grounded Vietnamese geometry data for Generate and Edit tasks in problem_tikz. Use when selecting substantial geometry problems, authoring mathematical-givens instructions and TikZ targets, or augmenting and validating JSONL batches under dataset/.
+description: Read audited geometry givens, form compatible configurations and purposeful auxiliaries, and prepare varied Generate/Edit instructions and reviewed TikZ data through the existing drawing harness.
 ---
 
 # Synthetic TikZ data
 
-Create Generate and Edit examples from complete geometry problems in grades 6-12, including complete TikZ targets and their rendered verification. Source selection and instruction writing alone do not complete a dataset row. The user wants substantial geometric configurations and concise mathematical givens. A large number of labels, a long statement, or a difficult calculation alone does not make a useful drawing example.
+Use this skill for source problems → mathematical-givens instructions → Generate/Edit targets. Work in this repository; MathPaper is a read-only harness reference. Follow [dataset conventions](../../../dataset/CONVENTIONS.md) for source identity, target format, mathematical rubrics, review and split integrity. Use [tools/generate_instruction.py](../../../tools/generate_instruction.py) through CPA with the [preparation strategy](references/run-prompt.md). It supplies this skill and audited context, captures typed proposals and traces, and checkpoints supervised JSONL. Do not restart strategy brainstorming. Instruction-only requests stop before drawing. When the user requests dataset orchestration, execute the strategy's generation, drawing and review cycle through the existing runners until the agreed per-task quotas are met; no new agent framework is needed.
 
-## Read the common contract
+## Read the whole supplied pool
 
-Use [dataset/CONVENTIONS.md](../../../dataset/CONVENTIONS.md) as the shared source-selection, instruction, JSONL, augmentation and verification contract. Read it before preparing a batch. Paths in that contract are relative to the repository root unless explicitly absolute.
+The CPA runner loads the complete supplied pool once from the existing manifests, source-batch allowlist, eight audit inventories and Onn selection locators. Each call receives a bounded source subset, complete statements/subparts and its relevant inventory verbatim. Work only from that supplied context; no filesystem browsing or new source parser is needed. Do not equate pool loading with mathematical review of every source. Exclude listed review holds and flag unresolved figure dependencies still present in the audits. Preserve hashes, original locators and coverage in the returned provenance and request snapshots.
 
-Read the current `C:/Users/Onn/Documents/Git/mathmath/src/agent/prompts/tikz.py` and the applicable MathPaper `AGENTS.md` instructions. Pin the prompt version and file hash for the batch. Use its target format and existing drawing/compiler harness. Keep MathPaper and all source files read-only.
+Reuse the inventories; do not extract the corpus again. Interpret their content as:
 
-## Select sources
-
-Use the source pools explicitly requested for the batch, defaulting to:
-
-- `docs/dataset-selection/grade-*.problems.jsonl`, restricted to grades 6–12; verify each selected record against its referenced curriculum source.
-- Complete problems in `Onn_generate/*.tex`.
-- Problems in `[L9CB]_2025_10_10.pdf` with verified page and exercise locators.
-
-Apply the selection rules in the common contract to every pool. Skip basic recognition, a standard shape with a few measurements, and repeated elementary midpoint/length exercises. A manifest's `prepared` decision establishes neither the requested complexity nor target quality.
-
-Inspect complete statements, including construction facts introduced in subparts. Keep solutions, proof goals and embedded diagrams available as offline evidence; do not turn them into assumed givens. Review supplied TikZ against the statement before reusing it.
-
-Deduplicate source problems before splitting. The current source audit identifies duplicates between `main.tex` and `test.tex`, and between `0410.tex` and the supplied PDF. Their precise locators and other extraction hazards are in the common contract. Cross-source copies and all descendants share one `source_group`.
-
-## Prepare each pair
-
-1. Preserve the source and assign its source group. Select a coherent drawing scope with all defining dependencies.
-2. Write `instruction` as Vietnamese mathematical givens: objects, incidence, ratios, inequalities, order and intersection branches. Natural mathematical prose and necessary construction definitions are allowed. Exclude step-by-step drawing recipes about placing points and connecting them; state the required configuration and visible objects instead.
-3. For Generate, use `current_tikz: null`. For Edit, supply the actual complete starting TikZ and state a meaningful mathematical change plus the required preservation. Recompute affected dependent constructions in the target.
-4. Produce one complete `target_tikz` following the pinned harness prompt, including its `Relation marks` section. Preserve named construction dependencies and mathematical proportions; include the required visible relation marks. Record repairs to supplied code.
-5. Add only the pair-specific mathematical requirements to `evaluation_rubric`, using the common predicate convention. Compile, target-relative content and collision checks are shared. Preserve unsupported requirements explicitly and record how they were reviewed.
-6. Run the compile command below and inspect the returned render; verify the givens, branches, visible scope, relation marks and labels. A correct geometric relation does not excuse a missing required symbol: verify its presence and attachment in the render. Check Edit preservation against the actual starting diagram. Store the evidence and mark the row ready only under the contract's readiness rule.
-7. Serialize complete rows as UTF-8 JSONL under `dataset/<batch-id>/generate.jsonl` and `edit.jsonl`. Keep selection decisions in that batch's `selection.jsonl`; keep execution artifacts under `runs/<batch-id>/`.
-
-Follow the source-selection and instruction examples in the contract as decision examples, not a sentence template to repeat. Vary the mathematical configurations, active construction subsets, valid parameters and edit operations. Record each change and its seed/parameters; do not count label shuffling as mathematical diversity.
-
-## Compile, inspect and finish
-
-The agent authors the source-grounded instruction and target. [scripts/compile.py](scripts/compile.py) handles TikZ validation, the shared wrapper, the compiler request, PDF/PNG/log persistence, hashes and prompt snapshots. It uses the sibling MathPaper environment and running compiler service; it does not call a model or need API keys. No local TeX installation is needed. Run from the repository root:
-
-```powershell
-..\mathmath\.venv\Scripts\python.exe -B .agents\skills\synthetic-tikz\scripts\compile.py dataset\<batch-id>\generate.jsonl --output runs\<batch-id>\compile-01
-```
-
-Use `edit.jsonl` for Edit; both `current_tikz` and `target_tikz` are compiled. Add `--id <record-id>` to check a single row, or repeat `--id` for a subset. The compiler URL comes from `--compiler-url`, then the process's `COMPILER_URL`, then `http://127.0.0.1:18080`. Every invocation requires a fresh output directory, preserving earlier attempts. Inputs remain unchanged.
-
-1. Write candidate JSONL following the common contract. During drafting the helper only requires `id`, `task`, `instruction`, `current_tikz` and `target_tikz`; retain the source/lineage fields as soon as selected. It preserves additional fields but does not certify the full dataset schema. The helper fills `provenance.harness_profile` from the actual prompt/wrapper and saves their snapshots. If an existing profile differs, review the target against the changed prompt before starting a new profile revision.
-2. Run the command. Read `report.json` for each row's `report_path`; that report contains `target` and, for Edit, `current`. Their `artifacts` map gives exact PDF, PNG and log paths, completeness and SHA-256. The source, request options, stage outcomes, toolchain identity and input hashes are retained. Identical TikZ within one invocation reuses the same compiler result.
-3. Open each successful `page-1.png` using the image-viewing tool. Review the actual source, instruction, geometry, full relation-mark convention, labels and Edit preservation. Do not infer visual correctness from compiler success. If correction is needed, revise the TikZ, give the revised pair a new ID with its parent/source lineage, and compile into a fresh attempt directory. Use the batch's bounded repair budget; default to at most two source repairs before retaining the unresolved candidate.
-4. The helper writes `candidates.jsonl` with the actual profile and verification report paths, always with `verification.status: candidate` and `reviewed_by: null`. After completing the common readiness checks, record the actual reviewer and concrete findings in `verification.notes`, and set `ready` only for accepted rows. Save those complete records to the task's JSONL under `dataset/<batch-id>/`; preserve unresolved records as candidates and export only ready records with assigned splits. The compile report binds task, instruction, current/target TikZ, rubric and profile; metadata-only review updates do not require another compile.
-
-Exit `0` means every selected picture compiled and rendered, with status `needs_review`; it does not mean target approval. Exit `1` means at least one picture needs attention; other rows and available artifacts are retained. Exit `2` means invalid input/configuration or an existing output directory.
-
-| Report status | Next action |
+| Content | Use |
 | --- | --- |
-| `validation_failed` | Correct the rejected TikZ envelope/subset; no compiler request was sent. |
-| `compile_failed` | Read the saved compiler diagnostic and `result.log`; correct the source when the error belongs to it. |
-| `render_failed` | Inspect the raster outcome; retain the successful PDF. Use the shared compiler's `render_pdf` with that PDF for raster-only recovery, following its linked contract below. Do not regenerate geometry to fix raster infrastructure. |
-| `unavailable` | Transport, response validation, compiler timeout or unknown outcome; preserve the attempt and retry the same source once after the service is available. Do not classify this as incorrect geometry. |
+| G / givens | Source premises and explicitly defined objects. |
+| F / figure-dependent facts | Use resolved facts only. Consult the cited original when necessary facts remain missing or conflicting. |
+| Aux | Candidate constructions: distinguish later-subpart definitions from solution-added or newly proposed auxiliaries. |
+| Goal / conclusion | Omit proof/calculation requests and their answers from construction premises. |
 
-Compiler lifecycle and raster recovery follow the existing [compiler contract](../../../../mathmath/docs/latex-compilation-design.md). Keep infrastructure recovery bounded; do not install another compiler, replace the wrapper or repeatedly submit unchanged failures. Model-based authoring, when used, still goes through the existing drawing harness and its tracing/call limits.
+Do not trust `prepared` alone, infer missing incidence from names, or treat supplied TikZ as checked. Exclude unresolved configurations. Select interacting constructions rather than bare recognition or elementary length reading; skip weak pools without quotas. A midpoint or right triangle can be useful inside a richer configuration.
 
-## Execution and completion
+## Form meaningful givens groups
 
-For real model batches, establish a bounded source/call scope and use the already authorized provider and configured LangSmith tracing. Reuse existing credentials and harness limits; never print secrets or create a second drawing loop. Keep the target and rubric outside the drawing worker's inputs.
+Identify the base configuration, actual premises, each dependent object's definition, and the mathematical objects/relations in the visible scope. Use a short mathematical description while reasoning; do not build a generation DSL or send this analysis to the drawing model.
 
-Do not turn this skill into permission to send source material to additional providers or message other chats. Existing user authorization remains applicable within its stated scope.
+Group by compatible geometry and dependencies, not textbook order, labels or chapter names. Seek these families in the actual pool; this is neither a closed taxonomy nor a mandatory allocation:
 
-Before export, check the common JSONL fields, evidence hashes, source-group splits, duplicate inputs, and target completeness. Do not claim that a schema check or compilation proves mathematical correctness. Report actual selected/skipped source counts, candidate/ready counts by task, unique source groups, and preparation routes. State unresolved requirements without counting them as successes.
+| Family | Linked constructions | Preserve |
+| --- | --- | --- |
+| Triangle, altitude and reflection | Feet, altitude midpoints, reflection about a foot, intersection with a parallel. | Triangle type, inequalities, projection carrier, interior/exterior feet, nonzero segments. |
+| Medians and parallel transversals | Selected medians, centroid, midsegments, side ratios, corresponding triangles. | Midpoint carriers, ratios/order, vertex correspondence, intersection existence. |
+| Bisectors and equidistance | Internal/external bisector, side intersection, feet to angle arms, incenter/contact radii. | Sector, ray versus line, bisector branch, nondegenerate angle. |
+| Quadrilateral and diagonals | Parallelogram/trapezoid, diagonal intersection, diagonal projections, side-cutting transversal. | Vertex order, parallel pair, required convexity, segment versus extension. |
+| Circle, secant and tangent | Diameter, chord midpoint, contact radius, second intersection, circumcircle. | Center/radius, inside/on/outside condition, selected intersection, distinctness, ray order. |
+| Two circles | Common chord/centers, opposite diameter endpoints, secant through an intersection, contacts. | Intersecting/tangent branch, each intersection's parents, center-distance restrictions. |
+| Spatial configuration | Pyramid/prism with a defined altitude, section or face auxiliary. | Actual 3D incidence/metric relations before projection; visible/hidden roles. |
+
+A family supports several scopes; it does not authorize arbitrary merging. Map common objects consistently, keep every parent source, and check joint satisfiability. The same triangle cannot be acute and obtuse; independently fixed side/angle sets cannot simply be pasted together. Restricting a general triangle to a right triangle is a recorded synthetic change. Equality/similarity must preserve vertex correspondence. A combined configuration is not an original source fact.
+
+Before accepting a group, check complete definitions, triangle inequalities/angle sums, positive and consistent parameters, nondegeneracy, intersection existence and branch, and segment/ray order. Recheck the whole configuration after a change. Numerical coordinates can witness one instance or expose a contradiction; they do not prove a general theorem and are not instruction text. Leave genuine geometric freedom free.
+
+## Choose purposeful auxiliaries
+
+Each auxiliary needs a mathematical purpose in this configuration. Prefer an explicit later-subpart construction, then a verified solution/hint construction, then a deliberate synthetic construction related to active givens. Record which kind it is. A solution auxiliary is added scope, not an original premise or permission to assume the proof conclusion.
+
+For each proposal establish:
+
+1. What relationship it exposes or compares: height, distance to a carrier, symmetry, equal radii, midpoint ratio, corresponding triangles, circle contact or intersection.
+2. Its defined parents/carriers, existence and intended branch.
+3. Its visible role: segment, ray, supporting line, circle/arc, point or contact radius.
+4. Distinctness, absence of unintended degeneracy, and an actual contribution beyond a redundant no-op.
+
+Useful choices include a perpendicular foot to a named support, parallel through a specified point to a side, median to a named midpoint, reflection about a point/line, diameter through a circle point, center-to-contact radius, chord midpoint/perpendicular, circumcircle of a noncollinear triple, or segment between defined points serving the selected comparison. Define every new endpoint and justify each auxiliary from the active configuration.
+
+Preserve these branches:
+
+- A projection onto line `BC` can lie outside segment `BC`. Do not impose interior membership without source evidence or a deliberate realizable synthetic restriction.
+- Name intersection carriers explicitly as lines, rays or segments. Before using two segments, establish that the intersection lies on both. When it lies on an extension, state the supporting lines or intended rays; an unnamed extension is not an acceptable branch. An altitude foot is not an orthocenter: check its defining role rather than assigning a convenient name.
+- A line through a circle point has a distinct second intersection only away from tangency. Name it as distinct from the known intersection. Two tangent contacts from an outside point need a selected branch or explicitly retained symmetric freedom.
+- Parallel lines have no finite intersection; a circumcircle needs a noncollinear triple; coincident endpoints cannot provide a right-angle carrier.
+- Internal/external bisectors, minor/major arcs, same/opposite half-planes, and segments/rays/lines are different conditions.
+- An Edit adds a purposeful auxiliary to the actual starting diagram. Preserve its existing geometry and frame. Do not turn side lengths, radii, angle values, ratios, colour, labels or rescaling into Edit operations.
+
+Do not connect every pair of points, attach arbitrary midpoints to weak sources, or invent special angles/ratios to simplify TikZ.
+
+## Write varied mathematical instructions
+
+Write concise Vietnamese givens with necessary definitions and selected mathematical objects. “H là hình chiếu của A lên đường thẳng BC” is mathematical construction data. Exclude point-placement recipes, coordinates, TikZ syntax, renderer advice and repeated quality boilerplate. Remove textbook scaffolding, proof requests and unverified conclusions. Do not append generic segment inventories such as “Các đoạn ... thuộc hình”, “Hình gồm ...” or “Có các đoạn ...”. Define a purposeful auxiliary mathematically; do not add a stock visibility sentence or rename an arbitrary connection to make it sound meaningful. Apply these checks to assistant revisions as well as model proposals.
+
+For Edit, state only the auxiliary's mathematical definition relative to `current_tikz`, without “Bổ sung/Thêm” prefixes or “Giữ nguyên ...” lists. Its added carriers/points must expose an active geometric relationship. Include existing facts only to disambiguate a construction. Parameter/relation replacement and removal are outside this batch's Edit task.
+
+Define an auxiliary by its actual construction role when that role holds. `HM, HN lần lượt là trung tuyến của các tam giác HAB, HAC` defines the midpoint endpoints and their carriers. `BA′, CA′ là các bán kính tới A′ của hai đường tròn tâm B, C` selects real radius carriers. With AB a diameter centered at O, `MO, NO lần lượt là trung tuyến của các tam giác MAB, NAB` selects those carriers; OM and ON are not radii when M and N are external tangent intersections. These are mathematical definitions, not substitutes for generic segment inventories. Do not invent a role or state the theorem to be proved as a premise. In Edit, check that the requested carriers are actually absent from the starting diagram.
+
+Vary dependency-closed auxiliary subsets and compatible combinations: altitude/projection carriers, medians/midsegments, parallels, bisectors, reflection carriers, radii/contact lines and branch-defined intersections. Every auxiliary must have a purpose, not merely increase point count. Retain original source measurements where relevant. Changing numbers, wording, labels or drawing scale alone supplies no new case in either task. New Generate cases need a different valid mathematical construction/scope; Edit cases need a purposeful auxiliary addition to a genuinely different starting scope.
+
+Shuffle families, subsets, admitted free parameters, Edit operations and natural clause order with a recorded seed. Reordering must preserve unambiguous definitions. Do not impose one sentence template or repeat one auxiliary throughout the batch. No per-source ceiling applies to valid descendants; each executed batch still has a finite row/call budget.
+
+Choose the mathematical case before its presentation. For each accepted case, sample one concise wording: reorder independent fact clauses after their prerequisites, merge/split short clauses, vary direct versus defining statements, or use an equivalent symbolic definition when it is complete and nondegenerate. Keep point-to-carrier correspondence aligned. Preserve angle vertices/direction, ratio operand order, units, inequalities and intersection branches. Do not add redundant facts or unusual synonyms for variety; ordinary mathematical terminology may repeat. The seed records sampling choices, not a guarantee that generated prose is deterministic.
+
+Screen exact input duplicates with Unicode/whitespace normalization: instruction for Generate, instruction plus actual/intended starting configuration for Edit. Then review semantic duplicates modulo wording, equivalent definitions, consistent point renaming and unit conversion. Generate identity concerns the whole givens/scope; Edit identity also concerns the starting configuration and mathematical change, so the same edit text on different actual bases is not automatically duplicate data. Wording, renaming and uniform rescaling alone must not fill the row quota. Report mathematical variation separately from presentation repetition, and inspect repeated openings/clause patterns and operation concentrations across the whole batch. Keep this audit in existing notes/provenance, outside mathematical instructions; no generation DSL.
+
+Examples grounded in the reviewed pool:
+
+- **Generate, source scope:** `Tam giác ABC vuông tại A; H là chân đường cao từ A xuống BC. I, K lần lượt là trung điểm AH, HB.` Grade 8 SGK 1, `L4197`; its proof's perpendicularities remain conclusions.
+- **Generate, synthetic combination:** `ABC vuông tại A, H là hình chiếu của A lên BC. I là trung điểm AH, K là trung điểm HB. E, F lần lượt là hình chiếu của H lên AB, AC.` Combines selected constructions from grade 8 `L4197` and `L4874`; verify the selected subsets and retain both parents.
+- **Edit, addition:** `E, F là hình chiếu của H lên AB, AC.` Requires an actual base containing that configuration.
+- **Edit, parallel auxiliary:** `L là giao điểm của đường thẳng BC với đường thẳng qua I song song AC.` In the right-triangle/altitude-midpoint base above, this gives the corresponding midsegment IL in triangle AHC.
+- **Generate, circle family:** `Đường tròn (O) có đường kính AB. C thuộc (O), C khác A, B và AC < BC; H là trung điểm BC. Tiếp tuyến tại B của (O) cắt tia OH tại D.` Base of Onn Bài 6; do not assume its later tangent/concyclicity claims.
+- **Edit, circle scope:** `E là giao điểm thứ hai của đường thẳng AD với (O), E khác A; M là trung điểm AE.` Requires that actual circle-family base.
+
+Each Edit takes complete actual starting TikZ in `current_tikz`, from a checked Generate result or checked existing diagram. Add a coherent auxiliary construction with its necessary dependencies. The same auxiliary sentence on bases differing only by lengths or labels is not a new mathematical Edit case.
+
+## Draft, draw, review, export
+
+Call CPA through the instruction runner with a declared call budget, rows per call, seed and at most four workers. It uses one structured model call per context and no automatic refill/reviewer loop. Schema, known-parent, task-scope, boilerplate and exact-duplicate checks are deterministic. Raw replies, parsing errors, usage, model identity and trace IDs stay available for supervision; these checks do not approve mathematical content.
+
+Pass prior working instructions with `--existing`; resumed outputs are also supplied as source-scoped history. Avoid their mathematical cases, not just their exact sentences. The runner additionally screens number/point-name substitutions and reports them separately. This conservative text screen cannot prove semantic uniqueness or mathematical validity: review equivalent definitions/clause reorderings, repetitive auxiliary choices and unsupported branches. Do not repeatedly refill a rejected case with another paraphrase.
+
+The runner writes `instructions.jsonl` with all instruction candidates, `generate-inputs.jsonl` with Generate caller rows, and `edit-inputs.jsonl` only when actual checked starting TikZ is available. Its fields are `id`, `task`, `instruction`, `source`, `source_group`, `current_tikz` and supported classification/provenance. Edit drafts without starting code retain complete `starting_givens` in offline provenance and stay outside Edit caller inputs. IDs, original locators and family joins come from application code, never model invention or filename conventions.
+
+Record instruction review in optional `supervision.json` under the shared conventions. Cases marked `needs_revision` remain in the proposal archive but are excluded from caller inputs, including exact duplicates. Unreviewed proposals remain candidates; reviewing an instruction does not approve its eventual drawing.
+
+Review the returned mathematical instructions against their exact source context; preserve the final instruction/source verbatim when passing them to drawing. For new drawings, first draw Generate inputs with `current_tikz: null`, check the resulting diagram, then copy its exact `target_tikz` into each applicable Edit's `current_tikz`. An existing checked diagram can also supply that field. `--bases` accepts caller-checked Generate rows; an Edit's `starting_givens` must exactly match an applicable supplied instruction before the runner copies its actual code. It never guesses the starting diagram from an ID. Match its actual objects and givens to the Edit instruction; do not substitute another realization silently. Keep original/combined source locators and synthetic changes in provenance. Include existing mathematical context only when needed to disambiguate the Edit; do not repeat unchanged givens or a replaced premise.
+
+Use [tools/draw_instruction.py](../../../tools/draw_instruction.py). It reuses the configured model and native MathPaper `problem_tikz`/`build_tikz_agent`, bounds parallel drawing/model calls, and saves candidates, compiler-backed previews, messages and trace IDs. Only `instruction` and actual `current_tikz` enter drawing inputs. The runner draws fully specified records independently; it does not find or generate an Edit's starting picture. Do not submit an Edit until its actual starting TikZ is available. Source audits, targets, rubrics and provenance remain offline; tracing records the execution. Do not build another renderer loop or reviewer model.
+
+Drawing accepts 1–32 workers with one snapshot writer. Compare higher worker settings on identical inputs using successful new drawings per minute and failure rates, then use the measured setting; keep each invocation's row/model-call limits explicit. Throughput replicas share the same input IDs and source lineage and count only once in dataset totals.
+
+Each result updates `candidates.parquet` atomically alongside the recoverable JSON checkpoints. Its `tikz_image` column embeds the PNG tied to that exact target; missing or unverified images are null in candidates. The reviewed export requires matching images and uses the same HF image schema. Retries replace rows by ID; resumed subsets preserve other results.
+
+Run the same input/output with `--resume` after a failure or interruption. Completed targets with matching inputs are skipped; failures and incomplete drawings are retried even when partial TikZ exists. Supplied valid targets are preserved as candidates unless already independently reviewed. Use `--retry-id <ID>` to redraw a completed but defective target. Each invocation attempts pending rows once within its declared budget; no automatic retry loop. Per-row checkpoints recover progress, and separate attempt/session folders preserve traces and source snapshots. Never change the explicit `current_tikz` to a failed output during retry.
+
+Read and pin the current [TikZ prompt](../../../../mathmath/src/agent/prompts/tikz.py) at drawing start. Follow its format and **all applicable Relation marks**: equal-segment classes, equal-angle classes/bisector halves, perpendicular/right-angle corners and requested angle text. Correct geometry with missing required marks is incomplete. Inspect carriers, sectors, class patterns and collisions in the actual render. Do not turn unproved conclusions into mandatory marks.
+
+Inspect each target against the instruction, form its minimal mathematical rubric under the shared conventions, and run supported executable checks. Review Edit's exact starting/ending pair. Reuse the existing evaluator and [compile helper](scripts/compile.py) for authored/repaired targets. Unsupported requirements need concrete independent evidence. Compilation, model completion and target-versus-itself comparison cannot approve source fidelity.
+
+Keep failed/incomplete/unresolved rows outside ready data. Record actual review and bind it to task/instruction/current/target/rubric and source-family provenance using the runner's `review_digest`. Assign family splits consistently across tasks/batches, then use `--export` for final reviewed Parquet. Export makes no model calls and preserves the instruction-stage JSONL. Report software checks separately from diagram quality.

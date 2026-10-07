@@ -1,4 +1,4 @@
 interface:
   display_name: "Synthetic TikZ Data"
-  short_description: "Prepare substantial geometry Generate/Edit datasets"
-  default_prompt: "Use $synthetic-tikz to prepare a bounded Generate and Edit batch from the local geometry sources, following dataset/CONVENTIONS.md and saving JSONL under dataset/."
+  short_description: "Form valid givens groups and useful geometry auxiliaries"
+  default_prompt: "Use $synthetic-tikz and the shared strategy to prepare diverse auxiliary-based Generate/Edit cases with tools/generate_instruction.py and CPA. For dataset production, continue through tools/draw_instruction.py, mathematical and visual review, family splits and HF Parquet export; count only unique reviewed pairs."

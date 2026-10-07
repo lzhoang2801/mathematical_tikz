@@ -9,19 +9,17 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import numpy as np
 import pymupdf
 from agent.latex.tikz import standalone_tikz_document, validate_tikz
 from latex_compiler.client import compile as compile_latex
 from latex_compiler.schemas import CompileRequest, Images, Outputs
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString
 from shapely.ops import unary_union
 
-from evaluation.tikz_annotations import PROBE_TEX, parse_annotations
-from evaluation.tikz_geometry import path_parts
+from evaluation.tikz_geometry import measure_circle, path_parts
 from evaluation.tikz_readability import attach_glyph_ink, extract_glyph_outlines
 
-SCHEMA_VERSION = "tikz-observations:v3"
+SCHEMA_VERSION = "tikz-observations:v4"
 
 
 _PGF_DIMENSION = r"([-+]?(?:\d+(?:\.\d*)?|\.\d+))pt"
@@ -67,47 +65,11 @@ def _stage_record(stage: Any) -> dict[str, Any]:
     }
 
 
-def _empty_annotations(status: str, reason: str | None = None) -> dict[str, Any]:
-    return {
-        "status": status,
-        "annotations": [],
-        "truncated": False,
-        "diagnostics": [reason] if reason else [],
-        "coordinate_unit": "TeX pt",
-        "coordinate_frame": "PGF runtime softpath; map with discovery frame_mapping",
-    }
-
-
 _DISCOVERY_HOOKS = rf"""
 \makeatletter
 \newcount\PTKZ@nodecount
 \newif\ifPTKZ@truncated
 \newif\ifPTKZ@labelpending
-\newif\ifPTKZ@inNode
-\def\PTKZ@logcircle#1#2{{%
-  \begingroup
-    \pgf@process{{\pgfpointtransformed{{#1}}}}%
-    \edef\PTKZ@cx{{\the\pgf@x}}\edef\PTKZ@cy{{\the\pgf@y}}%
-    \pgf@process{{\pgfpointtransformed{{\pgfpointadd{{#1}}{{\pgfpoint{{#2}}{{0pt}}}}}}}}%
-    \edef\PTKZ@xx{{\the\pgf@x}}\edef\PTKZ@xy{{\the\pgf@y}}%
-    \pgf@process{{\pgfpointtransformed{{\pgfpointadd{{#1}}{{\pgfpoint{{0pt}}{{#2}}}}}}}}%
-    \edef\PTKZ@yx{{\the\pgf@x}}\edef\PTKZ@yy{{\the\pgf@y}}%
-    \typeout{{PTKZCIRC|\pgfpictureid|\PTKZ@activeindex|\PTKZ@cx|\PTKZ@cy}}%
-    \typeout{{PTKZCRX|\pgfpictureid|\PTKZ@activeindex|\PTKZ@xx|\PTKZ@xy}}%
-    \typeout{{PTKZCRY|\pgfpictureid|\PTKZ@activeindex|\PTKZ@yx|\PTKZ@yy}}%
-  \endgroup
-}}
-\let\PTKZ@originalpathcircle\pgfpathcircle
-\def\pgfpathcircle#1#2{{%
-  \ifPTKZ@inNode
-    \ifcsname pgf@sh@ns@\pgf@node@name\endcsname
-      \edef\PTKZ@shapename{{\csname pgf@sh@ns@\pgf@node@name\endcsname}}%
-      \def\PTKZ@circleshape{{circle}}%
-      \ifx\PTKZ@shapename\PTKZ@circleshape\PTKZ@logcircle{{#1}}{{#2}}\fi
-    \fi
-  \fi
-  \PTKZ@originalpathcircle{{#1}}{{#2}}%
-}}
 \def\PTKZ@capturelabelparent{{%
   \begingroup
     \pgftransformreset
@@ -121,8 +83,6 @@ _DISCOVERY_HOOKS = rf"""
 \let\PTKZ@originalnodebegin\tikz@node@begin@hook
 \def\tikz@node@begin@hook{{%
   \tikz@fig@mustbenamed%
-  \global\edef\PTKZ@activeindex{{\number\numexpr\PTKZ@nodecount+1\relax}}%
-  \global\PTKZ@inNodetrue%
   \PTKZ@originalnodebegin
   \ifPTKZ@labelpending
     \let\PTKZ@attachx\PTKZ@pendingx
@@ -177,7 +137,6 @@ _DISCOVERY_HOOKS = rf"""
 \let\PTKZ@originalnodefinish\tikz@node@finish
 \def\tikz@node@finish{{%
   \PTKZ@lognode
-  \global\PTKZ@inNodefalse\global\let\PTKZ@activeindex\relax
   \PTKZ@originalnodefinish
 }}
 \def\PTKZ@logbbox{{%
@@ -196,7 +155,7 @@ def _discovery_wrapper(tikz: str) -> str:
         raise ValueError("standalone wrapper has no document start")
     source = source.replace(
         document_start,
-        document_start + "\n" + _DISCOVERY_HOOKS + "\n" + PROBE_TEX,
+        document_start + "\n" + _DISCOVERY_HOOKS,
         1,
     )
     return source.replace(r"\end{tikzpicture}", r"\TikzEvalLogBbox\end{tikzpicture}")
@@ -332,12 +291,10 @@ def _parse_discovery_log(
         }
 
     node_events: dict[tuple[str, str], dict[str, list[str]]] = {}
-    circle_events: dict[tuple[str, str], dict[str, list[list[str]]]] = {}
     node_markers = {"PTKZNODE", "PTKZNPOS", "PTKZNBBOX", "PTKZNSBOX"}
-    circle_markers = {"PTKZCIRC", "PTKZCRX", "PTKZCRY"}
     for line in log_text.splitlines():
         marker_positions = [
-            (line.find(f"{marker}|"), marker) for marker in node_markers | circle_markers
+            (line.find(f"{marker}|"), marker) for marker in node_markers
         ]
         marker_positions = [(position, marker) for position, marker in marker_positions if position >= 0]
         if not marker_positions:
@@ -349,10 +306,7 @@ def _parse_discovery_log(
             continue
         _, picture_id, index_text, *values = fields
         key = (picture_id, index_text)
-        if marker in node_markers:
-            node_events.setdefault(key, {})[marker] = values
-        else:
-            circle_events.setdefault(key, {}).setdefault(marker, []).append(values)
+        node_events.setdefault(key, {})[marker] = values
 
     nodes: list[dict[str, Any]] = []
     for (picture_id, index_text), event in node_events.items():
@@ -401,61 +355,6 @@ def _parse_discovery_log(
             "corners_pt": corners_pt,
             "evidence_id": f"node-log:{picture_id}:{index_text}",
         }
-        if shape == "circle":
-            circle_rows = circle_events.get((picture_id, index_text), {})
-            required_circle_rows = {"PTKZCIRC", "PTKZCRX", "PTKZCRY"}
-            circle_path: dict[str, Any] = {
-                "status": "unknown",
-                "reason": "circle_path_event_incomplete",
-                "evidence_id": f"circle-path-log:{picture_id}:{index_text}",
-            }
-            if set(circle_rows) == required_circle_rows and all(
-                len(circle_rows[marker]) == 1 for marker in required_circle_rows
-            ):
-                try:
-                    center = [_dimension(item) for item in circle_rows["PTKZCIRC"][0]]
-                    x_endpoint = [_dimension(item) for item in circle_rows["PTKZCRX"][0]]
-                    y_endpoint = [_dimension(item) for item in circle_rows["PTKZCRY"][0]]
-                    if any(len(value) != 2 for value in (center, x_endpoint, y_endpoint)):
-                        raise ValueError("malformed circle path coordinates")
-                    circle_path.update(
-                        picture_center_pt=center,
-                        picture_x_radius_endpoint_pt=x_endpoint,
-                        picture_y_radius_endpoint_pt=y_endpoint,
-                    )
-                    if frame.get("status") == "verified_dimensions" and frame.get("picture_id") == picture_id:
-                        pdf_center = _pdf_point(center[0], center[1], frame)
-                        pdf_x_endpoint = _pdf_point(x_endpoint[0], x_endpoint[1], frame)
-                        pdf_y_endpoint = _pdf_point(y_endpoint[0], y_endpoint[1], frame)
-                        if pdf_center and pdf_x_endpoint and pdf_y_endpoint:
-                            circle_path.update(
-                                status="measured",
-                                coordinate_frame=frame["frame"],
-                                unit="PDF pt",
-                                center_pdf_pt=list(pdf_center),
-                                x_radius_endpoint_pdf_pt=list(pdf_x_endpoint),
-                                y_radius_endpoint_pdf_pt=list(pdf_y_endpoint),
-                                axis_radii_pdf_pt=[
-                                    math.dist(pdf_center, pdf_x_endpoint),
-                                    math.dist(pdf_center, pdf_y_endpoint),
-                                ],
-                                pdf_coordinate_error_bound_pt=_PDF_COORDINATE_ERROR_BOUND_PT,
-                                capture="pgfpathcircle_argument_after_outer_separation",
-                            )
-                            circle_path.pop("reason", None)
-                        else:
-                            circle_path["reason"] = "circle_path_pdf_frame_mapping_failed"
-                    else:
-                        circle_path["reason"] = "circle_path_pdf_frame_unavailable"
-                except ValueError:
-                    circle_path["reason"] = "malformed_circle_path_coordinates"
-                    unsupported.append("malformed_circle_path_coordinates")
-            elif circle_rows:
-                circle_path["reason"] = "duplicate_or_incomplete_circle_path_events"
-                unsupported.append("duplicate_or_incomplete_circle_path_events")
-            else:
-                unsupported.append("circle_path_event_missing")
-            node["circle_path_pdf"] = circle_path
         if frame.get("status") == "verified_dimensions" and frame.get("picture_id") == picture_id:
             node_center = _pdf_point(center_pt[0], center_pt[1], frame)
             node_attachment = _pdf_point(attachment_pt[0], attachment_pt[1], frame)
@@ -650,8 +549,6 @@ def _pdf_observations(pdf: bytes, pdf_sha256: str, source_digest: str) -> dict[s
     with pymupdf.open(stream=pdf, filetype="pdf") as document:
         pages = [_page_observation(page, index) for index, page in enumerate(document)]
     return {
-        "producer": "PyMuPDF Page.get_drawings(extended=True) and get_text(rawdict)",
-        "meaning": "PDF-emitted paths, extractable text and native glyph outlines; not semantic correctness",
         "pdf_sha256": pdf_sha256,
         "source_digest": source_digest,
         "pages": pages,
@@ -665,7 +562,6 @@ def compile_observe(tikz: str, artifact_dir: Path, compiler_http: httpx.Client) 
         "compile_success": False, "raster_success": False,
         "image_path": None, "pdf_path": None, "log_path": None,
         "nodes": [], "labeled_points": {},
-        "annotations": _empty_annotations("unknown"),
         "pdf_observations": None, "artifacts": {}, "metadata": metadata,
     }
     try:
@@ -709,10 +605,10 @@ def compile_observe(tikz: str, artifact_dir: Path, compiler_http: httpx.Client) 
             result["pdf_observations"] = _pdf_observations(pdf.data, artifacts["result.pdf"]["sha256"], original.source_digest)
         except (ValueError, RuntimeError, pymupdf.FileDataError) as error:
             result["pdf_observations"] = {"status": "extraction_error", "error": str(error)}
-    nodes, labels, discovery, annotations = _discover_executed_geometry(
+    nodes, labels, discovery = _discover_executed_geometry(
         canonical, root, compiler_http, original, artifacts, result["pdf_observations"]
     )
-    result.update(nodes=nodes, labeled_points=labels, annotations=annotations)
+    result.update(nodes=nodes, labeled_points=labels)
     metadata["discovery"] = discovery
     return result
 
@@ -724,7 +620,7 @@ def _discover_executed_geometry(
     original: Any,
     original_artifacts: Mapping[str, Mapping[str, Any]],
     pdf_observations: Mapping[str, Any] | None,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, Any], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, Any]]:
     wrapper = _discovery_wrapper(canonical_tikz)
     source_path = root / "discovery" / "main.tex"
     source_path.parent.mkdir(parents=True, exist_ok=True)
@@ -740,7 +636,7 @@ def _discover_executed_geometry(
         response = compile_latex(compiler_http, request)
     except (httpx.HTTPError, ValueError) as error:
         metadata.update(status="request_error", error=f"{type(error).__name__}: {error}")
-        return [], {}, metadata, _empty_annotations("unknown", "instrumented_compile_request_failed")
+        return [], {}, metadata
 
     artifact_records = _artifact_records(response, root / "discovery")
     original_png = original_artifacts.get("page-1.png", {})
@@ -786,12 +682,11 @@ def _discover_executed_geometry(
         invalid_reason = "instrumentation_render_mismatch"
     if invalid_reason:
         metadata.update(status="unknown", reason=invalid_reason)
-        return [], {}, metadata, _empty_annotations("unknown", invalid_reason)
+        return [], {}, metadata
 
     if pdf_observations is None:
         pdf_observations = {"pages": []}
     log_text = probe_log.data.decode("utf-8", errors="replace")
-    annotations = parse_annotations(log_text)
     nodes, frame, unsupported = _parse_discovery_log(
         log_text, pdf_observations, canonical_tikz
     )
@@ -823,121 +718,7 @@ def _discover_executed_geometry(
     metadata["node_count"] = len(nodes)
     metadata["frame_mapping"] = frame
     metadata["label_binding_status"] = "partial" if any(v.get("status") != "measured" for v in labeled_points.values()) else "ok"
-    metadata["annotation_status"] = annotations["status"]
-    metadata["annotation_count"] = len(annotations["annotations"])
-    return nodes, labeled_points, metadata, annotations
-
-
-def _point_dot_evidence(drawing: dict[str, Any], observation: dict[str, Any], font_size: float) -> str | None:
-    """Recognize optional empty circle-node glyphs at bound labeled points."""
-    x0, y0, x1, y1 = drawing["rect"]
-    width, height = x1 - x0, y1 - y0
-    if not (drawing.get("fill") is not None and drawing.get("fill_opacity", 1) > 0
-            and drawing.get("items") and all(item[0] == "c" for item in drawing["items"])
-            and 0 < max(width, height) <= font_size * 1.2):
-        return None
-    center = ((x0 + x1) / 2, (y0 + y1) / 2)
-    points = [(point["pdf_x"], point["pdf_y"]) for point in observation.get("labeled_points", {}).values()
-              if point.get("status") == "measured" and "pdf_x" in point and "pdf_y" in point]
-    point_text_ids = {f"pdf-text:{page.get('page_number', 1)}:{index}" for page in observation.get("pdf_observations", {}).get("pages", []) for index, span in enumerate(page.get("text_spans", [])) if _POINT_LABEL.fullmatch(_normalize_text(span.get("text", "")))}
-    # A duplicated label makes point identity unresolved, but does not turn its
-    # executed empty circle-node glyph into a newly required filled object.
-    points.extend(node["attachment_pdf_pt"] for node in observation.get("nodes", []) if node.get("attachment") == "label-parent-center" and node.get("attachment_pdf_pt") and point_text_ids.intersection(node.get("extractable_text_evidence", [])))
-    if not any(math.dist(center, point) <= 0.1 for point in points):
-        return None
-    matches = []
-    for node in observation.get("nodes", []):
-        circle = node.get("circle_path_pdf", {})
-        nc = circle.get("center_pdf_pt")
-        if (node.get("shape") != "circle" or circle.get("status") != "measured" or not nc
-                or node.get("pdf_text_observation") != "no_extractable_span_inside_node_bounds"
-                or math.dist(center, nc) > 0.02):
-            continue
-        # Runtime circle-path radii exclude outer separation. Transformed axis
-        # endpoints also describe an elliptical point glyph without guessing
-        # its radius from node anchors or adding a scale-dependent allowance.
-        ex, ey = circle.get("x_radius_endpoint_pdf_pt"), circle.get("y_radius_endpoint_pdf_pt")
-        if not ex or not ey:
-            continue
-        rx = math.hypot(ex[0] - nc[0], ey[0] - nc[0])
-        ry = math.hypot(ex[1] - nc[1], ey[1] - nc[1])
-        if abs(rx - width / 2) <= 0.02 and abs(ry - height / 2) <= 0.02:
-            matches.append(circle["evidence_id"])
-    return matches[0] if len(matches) == 1 else None
-
-
-def _annotation_paths(observation: dict[str, Any], strokes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
-    """Associate executed standard angle paths with unique emitted PDF paths."""
-    capture = observation.get("annotations", {})
-    frame = observation.get("metadata", {}).get("discovery", {}).get("frame_mapping", {})
-    if capture and capture.get("status") not in {"ok", "not_requested"}:
-        return [], ["Angle annotation capture is incomplete; paths remain strict"]
-    if not capture.get("annotations"):
-        return [], []
-    if capture.get("status") != "ok" or frame.get("status") != "verified_dimensions":
-        return [], ["Angle annotation provenance is incomplete; paths remain strict"]
-    annotations, issues, used = [], [], set()
-    for annotation in capture["annotations"]:
-        if not annotation.get("complete"):
-            issues.append("Incomplete executed angle annotation")
-            continue
-        anchor_labels, anchors = [], []
-        for role in ("first", "vertex", "second"):
-            raw = annotation["anchors"][role]
-            xy = _pdf_point(raw["x_pt"], raw["y_pt"], frame)
-            labels = [label for label, point in observation.get("labeled_points", {}).items()
-                      if point.get("status") == "measured" and xy is not None
-                      and math.dist(xy, (point["pdf_x"], point["pdf_y"])) <= 0.1]
-            anchor_labels.append(labels[0] if len(labels) == 1 else None)
-            anchors.append(xy)
-        for path in annotation["paths"]:
-            if "stroke" not in path.get("paint_actions", []):
-                continue
-            if None in anchor_labels or any(xy is None for xy in anchors):
-                issues.append("Angle annotation has an unresolved labeled anchor")
-                continue
-            items, current = [], None
-            for operation in path["operations"]:
-                values, op = operation["values_pt"], operation["op"]
-                xy = [_pdf_point(values[i], values[i + 1], frame) for i in range(0, len(values), 2)]
-                if any(point is None for point in xy):
-                    items = []
-                    break
-                if op == "M":
-                    current = first_point = xy[0]
-                elif op == "L" and current is not None:
-                    items.append(("l", current, xy[0]))
-                    current = xy[0]
-                elif op == "C" and current is not None:
-                    items.append(("c", current, *xy))
-                    current = xy[-1]
-                elif op == "Z" and current is not None:
-                    items.append(("l", current, first_point))
-                    current = first_point
-                else:
-                    items = []
-                    break
-            parts = [LineString(part) for part in path_parts({"items": items})]
-            if not parts:
-                issues.append("Unsupported angle softpath")
-                continue
-            geometry = unary_union(parts)
-            matches = [item for item in strokes if item["path"] not in used
-                       and geometry.hausdorff_distance(item["geometry"]) <= 0.1
-                       and abs(geometry.length - item["geometry"].length) <= 0.2]
-            if len(matches) != 1:
-                issues.append("Executed angle softpath does not uniquely identify a painted PDF stroke")
-                continue
-            item = matches[0]
-            used.add(item["path"])
-            first, vertex, second = anchor_labels
-            rays = tuple(sorted((first, second))) if annotation["kind"] == "right_angle" else (first, second)
-            key = (annotation["kind"], vertex, *rays, path["part"])
-            item["annotation_key"] = key
-            item["annotation_vertex"] = anchors[1]
-            annotations.append({"pic_id": annotation["pic_id"], "path": item["path"], "key": key,
-                                "anchors": anchor_labels, "vertex_pdf_pt": anchors[1]})
-    return annotations, issues
+    return nodes, labeled_points, metadata
 
 
 def _normalize_text(value: str) -> str:
@@ -972,44 +753,50 @@ def read_scene(observation: Mapping[str, Any]) -> dict[str, Any]:
             chars = [{"c": glyph["text"], "bbox": glyph["bbox_pt"]} for span in emitted["text_spans"] for glyph in span["glyphs"]]
             outlines = extract_glyph_outlines(page, chars=chars, drawings=emitted["drawings"])
         ink_issues = attach_glyph_ink(text, outlines)
-        raster_scale = min(2.0, 1800 / max(page.rect.width, page.rect.height))
-        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(raster_scale, raster_scale), colorspace=pymupdf.csRGB, alpha=False)
-        pixels = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width, 3)
         bounds = list(page.rect)
-    font_size = float(np.median([label["size"] for label in text])) if text else 10.0
-    markers, strokes, fills, unsupported = [], [], [], []
+    strokes, curves, circles, unsupported = [], [], [], []
     for index, drawing in enumerate(emitted["drawings"]):
         if drawing["type"] in {"clip", "group"}:
-            unsupported.append("Clip/group geometry is assessed by rendered visibility; no exact compositing proof")
+            unsupported.append("Clip/group compositing is unsupported by the point/carrier checks")
             continue
+        if drawing.get("color") is None or drawing.get("stroke_opacity", 1) <= 0:
+            continue
+        style = {"dashed": drawing.get("dashes", "[] 0").split("]")[0].strip() != "[",
+                 "path": index, "width": drawing.get("width", 1), "opacity": drawing.get("stroke_opacity", 1)}
+        if drawing.get("fill") is None and any(item[0] == "c" for item in drawing["items"]):
+            coordinates = [point for item in drawing["items"] if item[0] == "c" for point in item[1:]]
+            extent = max(max(point[axis] for point in coordinates) - min(point[axis] for point in coordinates) for axis in (0, 1))
+            try:
+                for part in path_parts(drawing, curve_tolerance=max(extent * 1e-4, 1e-8)):
+                    geometry = LineString(part)
+                    curves.append({**style, "geometry": geometry})
+                    circle = measure_circle(part)
+                    if circle is None:
+                        unsupported.append("An emitted curved stroke has no supported full-circle measurement")
+                        continue
+                    left, top, right, bottom = geometry.bounds
+                    if left < bounds[0] or top < bounds[1] or right > bounds[2] or bottom > bounds[3]:
+                        unsupported.append("A circle extends beyond the visible PDF page")
+                    # Repainting one circle does not create another geometric object.
+                    duplicate = any(circle["radius"] > 0 and math.dist(circle["center"], old["center"]) / circle["radius"] < 1e-6
+                                    and abs(circle["radius"] / old["radius"] - 1) < 1e-6
+                                    and style["dashed"] == old["dashed"] for old in circles)
+                    if not duplicate:
+                        circles.append({**circle, **style})
+            except (ValueError, ArithmeticError) as error:
+                unsupported.append(str(error))
+        straight = [item for item in drawing["items"] if item[0] in {"l", "re", "qu"}]
         try:
-            parts = path_parts(drawing)
+            parts = path_parts({"items": straight, "closePath": drawing.get("closePath") and len(straight) == len(drawing["items"])})
         except ValueError as error:
             unsupported.append(str(error))
             continue
-        x0, y0, x1, y1 = drawing["rect"]
-        marker_evidence = _point_dot_evidence(drawing, dict(observation), font_size)
-        if marker_evidence:
-            center = ((x0 + x1) / 2, (y0 + y1) / 2)
-            markers.append({"evidence_id": marker_evidence, "xy": center, "path": index,
-                            "fill": drawing.get("fill"), "radius": max(x1 - x0, y1 - y0) / 2,
-                            "color": drawing["fill"], "opacity": drawing.get("fill_opacity", 1), "geometry": Point(center)})
-            continue
-        lines = [LineString(part) for part in parts if len(part) >= 2 and LineString(part).length > 1e-8]
-        if drawing.get("color") is not None and drawing.get("stroke_opacity", 1) > 0:
-            components = [LineString(part) for item in drawing["items"] for part in path_parts({"items": [item]}) if len(part) >= 2]
-            components += [LineString(part[-2:]) for part in parts if drawing.get("closePath") and len(part) >= 3]
+        components = [LineString([a, b]) for part in parts for a, b in zip(part, part[1:]) if a != b]
+        if components:
             strokes.append({
-                "components": components, "geometry": unary_union(lines), "color": drawing["color"],
-                "dashed": drawing.get("dashes", "[] 0").split("]")[0].strip() != "[",
-                "path": index, "width": drawing.get("width", 1), "opacity": drawing.get("stroke_opacity", 1),
+                "components": components, "geometry": unary_union(components), "color": drawing["color"],
+                **style,
             })
-        if drawing.get("fill") is not None and drawing.get("fill_opacity", 1) > 0:
-            polygons = [Polygon(part) for part in parts if len(part) >= 3]
-            if any(not polygon.is_valid for polygon in polygons) or len(polygons) > 1:
-                unsupported.append(f"Complex fill path {index} needs winding-rule handling")
-            elif polygons:
-                fills.append({"geometry": polygons[0], "color": drawing["fill"], "path": index, "opacity": drawing.get("fill_opacity", 1)})
     points, bindings, unresolved = {}, {}, []
     measured = observation.get("labeled_points", {})
     visible_labels = {label["text"] for label in text if _POINT_LABEL.fullmatch(label["text"])}
@@ -1022,13 +809,11 @@ def read_scene(observation: Mapping[str, Any]) -> dict[str, Any]:
             points[label] = None
             unresolved.append(label)
             bindings[label] = {**point, "status": "unknown", "reason": point.get("reason", "No execution-grounded label attachment")}
-    annotations, issues = _annotation_paths(dict(observation), strokes)
-    unsupported.extend(issues)
     unsupported.extend(issue for issue in observation.get("metadata", {}).get("discovery", {}).get("unsupported", []) if not issue.startswith("coordinate_name:"))
     return {
         "frame": "original_pdf", "unit": "pdf_pt", "pdf_sha256": digest,
-        "annotations": annotations, "points": points, "bindings": bindings, "unresolved": unresolved,
-        "text": text, "ink_issues": sorted(set(ink_issues)), "markers": markers, "strokes": strokes, "fills": fills,
-        "unsupported": sorted(set(unsupported)), "pixels": pixels, "raster_scale": raster_scale, "bounds": bounds,
+        "points": points, "bindings": bindings, "unresolved": unresolved,
+        "text": text, "ink_issues": sorted(set(ink_issues)), "strokes": strokes, "curves": curves, "circles": circles,
+        "unsupported": sorted(set(unsupported)), "bounds": bounds,
     }
 

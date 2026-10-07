@@ -1,187 +1,242 @@
-"""Compare emitted content after similarity alignment of resolved mathematical points."""
+"""Separate constructed-object geometry from point and stroke coverage."""
 from __future__ import annotations
 
 import math
-from collections import Counter
+from functools import lru_cache
 from typing import Any
 
-import numpy as np
-from shapely import affinity
-from shapely.geometry import Point
+from shapely.geometry import LineString
 from shapely.ops import unary_union
+
+from evaluation.tikz_geometry import REL_TOL
 
 PATH_TOLERANCE = 0.006
 COVERAGE_MINIMUM = 0.985
 
 
-def _alignment(target: np.ndarray, output: np.ndarray, *, allow_reflection: bool = False) -> tuple[list[float], float, bool]:
-    a, b = output - output.mean(axis=0), target - target.mean(axis=0)
-    u, _, vt = np.linalg.svd(a.T @ b)
-    rotation = u @ vt
-    reflected = bool(np.linalg.det(rotation) < 0)
-    if reflected and not allow_reflection:
-        u[:, -1] *= -1
-        rotation = u @ vt
-    scale = float(np.sum((a @ rotation) * b) / np.sum(a * a))
-    if scale <= 0 or not math.isfinite(scale):
-        raise ValueError("No positive similarity alignment")
-    shift = target.mean(axis=0) - scale * output.mean(axis=0) @ rotation
-    matrix = [scale * rotation[0, 0], scale * rotation[1, 0], scale * rotation[0, 1], scale * rotation[1, 1], shift[0], shift[1]]
-    error = float(np.linalg.norm(scale * output @ rotation + shift - target, axis=1).max())
-    return [float(x) for x in matrix], error, reflected
+def _status(states: list[str]) -> str:
+    return "different" if "different" in states else "unknown" if "unknown" in states else "match"
 
 
-def _compatible(a: dict[str, Any], b: dict[str, Any]) -> bool:
-    return max(abs(x - y) for x, y in zip(a["color"], b["color"])) < 0.05 and a.get("dashed") == b.get("dashed") and abs(a.get("opacity", 1) - b.get("opacity", 1)) < 0.05
+def _segments(scene: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {**stroke, "geometry": part}
+        for stroke in scene["strokes"]
+        for part in stroke.get("components", [stroke["geometry"]])
+        if part.geom_type == "LineString" and len(part.coords) == 2 and part.length > 0
+    ]
 
 
-def _coverage(source: list[dict[str, Any]], other: list[dict[str, Any]], tolerance: float, *, filled: bool = False) -> tuple[list[dict[str, Any]], float | None]:
-    results = []
-    for item in source:
-        geometry = item["geometry"]
-        support = unary_union([o["geometry"] for o in other if _compatible(item, o)])
-        parts = [geometry] if filled else item.get("components", [geometry])
-        fractions = []
-        tolerances = []
-        for part in parts:
-            amount = part.area if filled else part.length
-            # Protect a short edge even when emitted inside one long PDF path.
-            local_tolerance = tolerance if filled else min(tolerance, max(0.02, part.length * 0.02))
-            covered = part.intersection(support.buffer(local_tolerance))
-            fraction = (covered.area if filled else covered.length) / amount if amount > 1e-9 else 1.0
-            fractions.append(min(1.0, fraction))
-            tolerances.append(local_tolerance)
-        fraction = min(fractions, default=1.0)
-        results.append({"path": item["path"], "covered_fraction": fraction, "component_coverage": fractions, "component_tolerance_pt": tolerances, "matched": fraction >= COVERAGE_MINIMUM})
-    # Union equal paint styles before measuring so splitting or repeating a PDF
-    # path cannot change its weight. Component minima remain the defect guard.
-    styles: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-    for item in source:
-        key = (tuple(item["color"]), item.get("dashed"), item.get("opacity", 1))
-        styles.setdefault(key, []).append(item)
-    total, covered_total = 0.0, 0.0
-    for items in styles.values():
-        geometry = unary_union([item["geometry"] for item in items])
-        support = unary_union([item["geometry"] for item in other if _compatible(items[0], item)])
-        covered = geometry.intersection(support.buffer(tolerance))
-        total += geometry.area if filled else geometry.length
-        covered_total += covered.area if filled else covered.length
-    return results, min(100.0, 100 * covered_total / total) if total > 1e-9 else None
+def _bound_edges(scene: dict[str, Any]) -> list[dict[str, Any]]:
+    """Bind actual endpoints, without inferring incidental point-on-line givens."""
+    edges = []
+    for segment in _segments(scene):
+        endpoints = []
+        for xy in segment["geometry"].coords:
+            matches = [name for name, point in scene["points"].items()
+                       if point is not None and math.dist(xy, point) <= min(0.1, segment["geometry"].length * 0.001)]
+            if len(matches) != 1:
+                break
+            endpoints.append(matches[0])
+        if len(endpoints) == 2 and endpoints[0] != endpoints[1]:
+            edges.append({"kind": "segment", "points": sorted(endpoints), "dashed": segment.get("dashed", False)})
+    return edges
 
 
-def _path_visibility(scene: dict[str, Any], geometry: Any, color: tuple[float, ...], width: float = 1.0) -> float:
-    if geometry.is_empty or geometry.length <= 0:
-        return 0.0
-    paths = list(geometry.geoms) if hasattr(geometry, "geoms") else [geometry]
-    seen, count = 0, 0
-    pixels, scale = scene["pixels"], scene["raster_scale"]
-    expected = np.asarray(color) * 255
-    radius = max(1, min(5, math.ceil(width * scale / 2)))
-    for line in paths:
-        for distance in np.linspace(0, line.length, max(5, min(800, math.ceil(line.length * scale)))):
-            point = line.interpolate(float(distance))
-            x, y = int(point.x * scale), int(point.y * scale)
-            patch = pixels[max(0, y - radius):min(pixels.shape[0], y + radius + 1), max(0, x - radius):min(pixels.shape[1], x + radius + 1)]
-            count += 1
-            if patch.size and np.any(np.max(np.abs(patch.astype(float) - expected), axis=2) < 90):
-                seen += 1
-    return seen / count if count else 0.0
+def content_contract(scene: dict[str, Any]) -> list[dict[str, Any]]:
+    """The reviewed target supplies point/segment identities and circle presence, not inferred circle givens."""
+    points = [{"kind": "point", "points": [name]} for name in sorted(scene["points"])]
+    edges = {(tuple(row["points"]), row["dashed"]) for row in _bound_edges(scene)}
+    return (points + [{"kind": "segment", "points": list(names), "dashed": dashed} for names, dashed in sorted(edges)]
+            + [{"kind": "circle", "dashed": circle["dashed"]} for circle in scene.get("circles", [])])
+
+
+def _line(requirement: dict[str, Any], points: dict[str, Any]) -> LineString:
+    names = requirement.get("points")
+    if requirement.get("kind") != "segment" or not isinstance(names, list) or len(names) != 2:
+        raise ValueError("A connection requires two named points")
+    if not isinstance(requirement.get("dashed", False), bool):
+        raise ValueError("The dashed flag must be Boolean")
+    if set(requirement) - {"kind", "points", "dashed"}:
+        raise ValueError("Only point identity and solid/dashed connections are in scope")
+    if any(not isinstance(name, str) or not name or points.get(name) is None for name in names):
+        raise ValueError("A required point binding is unavailable")
+    coordinates = [points[name] for name in names]
+    if any(len(point) != 2 or not all(math.isfinite(value) for value in point) for point in coordinates):
+        raise ValueError("A required point binding is invalid")
+    line = LineString(coordinates)
+    if line.length == 0:
+        raise ValueError("A required connection has coincident endpoints")
+    return line
+
+
+def _fraction(line: LineString, support: Any) -> float:
+    return min(1.0, line.intersection(support.buffer(line.length * PATH_TOLERANCE)).length / line.length)
+
+
+def carrier_scene(scene: dict[str, Any], contract: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep actual carrier strokes for text collisions, excluding unrelated text rules."""
+    lines = []
+    for requirement in contract + _bound_edges(scene):
+        if requirement.get("kind") != "segment":
+            continue
+        try:
+            lines.append(_line(requirement, scene["points"]))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    support = unary_union(lines)
+    strokes = [stroke for stroke in _segments(scene) if _fraction(stroke["geometry"], support) >= COVERAGE_MINIMUM]
+    return {**scene, "strokes": strokes + scene.get("curves", [])}
+
+
+
+def _circles(contract: list[dict[str, Any]], scene: dict[str, Any], geometry_space: str) -> dict[str, Any]:
+    """Bind distinct emitted circles to frozen constructions in this scene's frame."""
+    requested = [row for row in contract if row.get("kind") == "circle"]
+    observed = scene.get("circles", [])
+    size = max(len(requested), len(observed))
+    uncertain = bool(scene.get("unsupported"))
+    # ponytail: exact assignment is bounded to 12 circles; use a polynomial solver if real cases exceed this.
+    if size > 12:
+        return {"status": "unknown", "mathematical_status": "unknown",
+                "required_count": len(requested), "observed_count": len(observed),
+                "requirements": [{"requirement": row, "status": "unknown", "mathematical_status": "unknown",
+                                  "residual": None, "tolerance": REL_TOL, "reason": "Circle assignment limit exceeded (12)"}
+                                 for row in requested]}
+    definitions = []
+    for row in requested:
+        names = row.get("points", [])
+        try:
+            if geometry_space != "euclidean_2d" or len(names) != 2:
+                raise ValueError("A Euclidean circle requires explicit center and radius-witness points")
+            center, witness = [scene["points"][name] for name in names]
+            radius = math.dist(center, witness)
+            if not math.isfinite(radius) or radius <= 0:
+                raise ValueError("Circle radius is degenerate")
+            definitions.append((center, radius))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            definitions.append(None)
+    costs = {}
+    for i in range(size):
+        for j in range(size):
+            error = 0.0
+            style_error = 0
+            if i < len(requested) and j < len(observed):
+                definition = definitions[i]
+                if definition is not None:
+                    center, radius = definition
+                    error = max(math.dist(center, observed[j]["center"]) / radius, abs(observed[j]["radius"] / radius - 1))
+                if not math.isfinite(error):
+                    definitions[i] = None
+                    error = 0.0
+                style_error = int(requested[i].get("dashed", False) != observed[j]["dashed"])
+            costs[i, j] = (error, style_error)
+
+    @lru_cache(maxsize=None)
+    def assign(i: int, used: int) -> tuple[int, int, float, tuple[int, ...]]:
+        if i == size:
+            return 0, 0, 0.0, ()
+        candidates = []
+        for j in range(size):
+            if not used & (1 << j):
+                failures, remaining_style, remaining_error, remaining = assign(i + 1, used | (1 << j))
+                error, style_error = costs[i, j]
+                candidates.append((int(error > REL_TOL) + failures, style_error + remaining_style,
+                                   error + remaining_error, (j,) + remaining))
+        return min(candidates)
+
+    _, _, _, assignment = assign(0, 0)
+    rows = []
+    for i, declaration in enumerate(requested):
+        j = assignment[i]
+        circle = observed[j] if j < len(observed) else None
+        residual = costs[i, j][0] if circle is not None and definitions[i] is not None else None
+        math_status = ("unknown" if residual is None or uncertain else "match" if residual <= REL_TOL else "different")
+        coverage = ("different" if circle is None or circle["dashed"] != declaration.get("dashed", False) else "match")
+        rows.append({"requirement": declaration, "status": "unknown" if uncertain else coverage,
+                     "mathematical_status": math_status, "residual": residual, "tolerance": REL_TOL,
+                     "observed": circle, "reason": "Construction or curve evidence unavailable" if math_status == "unknown" else None})
+    count_status = ("different" if len(observed) > len(requested) else "unknown" if uncertain else
+                    "different" if len(observed) < len(requested) else "match")
+    return {"status": _status([count_status, *[row["status"] for row in rows]]),
+            "mathematical_status": _status([row["mathematical_status"] for row in rows]),
+            "required_count": len(requested), "observed_count": len(observed), "requirements": rows}
 
 
 def compare_content(
     target: dict[str, Any], output: dict[str, Any], *,
-    allow_reflection: bool = False, distance_tolerance: float = 0.005,
+    content_requirements: list[dict[str, Any]] | None = None,
+    geometry_space: str = "euclidean_2d",
 ) -> dict[str, Any]:
-    """Compare required labels, actual painted paths and sampled visibility."""
-    t, o = target, output
-    tc, oc = Counter(label["text"] for label in t["text"]), Counter(label["text"] for label in o["text"])
-    checks = {name: {"status": "unknown", "reason": "Resolved point correspondence is required for alignment"}
-              for name in ("strokes", "fills", "point_markers", "orientation", "annotations", "visibility")}
-    checks["text"] = {"status": "match" if tc == oc else "different",
-                      "missing": list((tc - oc).elements()), "extra": list((oc - tc).elements())}
-    labels = sorted(label for label in t["points"].keys() & o["points"].keys()
-                    if t["points"][label] is not None and o["points"][label] is not None)
-    if len(labels) < 2:
-        return {"checks": checks, "alignment": None, "limitations": ["At least two resolved labeled points are required for path alignment"]}
-    try:
-        tp = np.asarray([t["points"][label] for label in labels], dtype=float)
-        op = np.asarray([o["points"][label] for label in labels], dtype=float)
-        extent = float(np.linalg.norm(tp[:, None] - tp[None, :], axis=2).max())
-        if extent <= 0 or not np.isfinite(tp).all() or not np.isfinite(op).all():
-            raise ValueError("No finite nondegenerate point configuration for path alignment")
-        matrix, alignment_error, reflected = _alignment(tp, op, allow_reflection=True)
-    except (ValueError, np.linalg.LinAlgError) as error:
-        return {"checks": checks, "alignment": None, "limitations": [str(error)]}
-    rank = min(np.linalg.matrix_rank(tp - tp.mean(axis=0)), np.linalg.matrix_rank(op - op.mean(axis=0)))
-    checks["orientation"] = {
-        "status": "different" if reflected and rank == 2 and not allow_reflection else "match",
-        "reflected_best_fit": reflected if rank == 2 else None,
-        "reflection_allowed": allow_reflection,
-        "meaning": "Chirality under similarity alignment; collinear configurations have no planar chirality",
-    }
-    alignment = {"output_pdf_to_target_pdf": matrix, "reference_extent_pt": extent, "similarity_residual": alignment_error / extent}
-    aligned = {kind: [{**item, "geometry": affinity.affine_transform(item["geometry"], matrix), "components": [affinity.affine_transform(part, matrix) for part in item.get("components", [])]} for item in o[kind]] for kind in ("strokes", "fills")}
-    # Only uniquely matched, executed annotation paths get a local glyph scale.
-    # Construction strokes and nonstandard/manual glyphs retain strict coverage.
-    annotation_matches = []
-    target_keys = Counter(item.get("annotation_key") for item in t["strokes"] if item.get("annotation_key"))
-    output_keys = Counter(item.get("annotation_key") for item in aligned["strokes"] if item.get("annotation_key"))
-    for item in aligned["strokes"]:
-        key = item.get("annotation_key")
-        if not key or target_keys[key] != 1 or output_keys[key] != 1:
-            continue
-        reference = next(other for other in t["strokes"] if other.get("annotation_key") == key)
-        vertex = reference["annotation_vertex"]
-        output_vertex = affinity.affine_transform(Point(item["annotation_vertex"]), matrix)
-        if output_vertex.distance(Point(vertex)) > extent * distance_tolerance:
-            continue
-        radius = max(Point(vertex).distance(Point(xy)) for part in reference["components"] for xy in part.coords)
-        observed_radius = max(output_vertex.distance(Point(xy)) for part in item["components"] for xy in part.coords)
-        if min(radius, observed_radius) <= 0:
-            continue
-        factor = radius / observed_radius
-        # Translation here is bounded by the same observed point alignment; the
-        # separate point geometry check still detects changes to the anchors.
-        glyph_matrix = [factor, 0, 0, factor, vertex[0] - factor * output_vertex.x, vertex[1] - factor * output_vertex.y]
-        item["geometry"] = affinity.affine_transform(item["geometry"], glyph_matrix)
-        item["components"] = [affinity.affine_transform(part, glyph_matrix) for part in item["components"]]
-        item["reference_annotation_path"] = reference["path"]
-        annotation_matches.append({"key": key, "target_path": reference["path"], "output_path": item["path"], "local_positive_scale": factor})
-    checks["annotations"] = {"status": "observed", "same_runtime_annotations": target_keys == output_keys, "target": t["annotations"], "output": o["annotations"], "matches": annotation_matches, "meaning": "Runtime provenance permits local angle-glyph scaling; emitted-path coverage still determines presence and wedge, including equivalent manual paths"}
-    for kind in ("strokes", "fills"):
-        forward, forward_pct = _coverage(t[kind], aligned[kind], extent * PATH_TOLERANCE, filled=kind == "fills")
-        reverse, reverse_pct = _coverage(aligned[kind], t[kind], extent * PATH_TOLERANCE, filled=kind == "fills")
-        checks[kind] = {"status": "match" if all(r["matched"] for r in forward + reverse) else "different", "target_coverage": forward, "output_coverage": reverse,
-                        "target_coverage_pct": forward_pct, "output_coverage_pct": reverse_pct,
-                        "measurement": "Covered union length/area divided by total union length/area, summed over paint styles"}
-    marker_matches = []
-    for source, other, transform_marker in ((t, o, True), (o, t, False)):
-        for marker in source["markers"]:
-            point = marker["geometry"] if transform_marker else affinity.affine_transform(marker["geometry"], matrix)
-            distances = [point.distance(affinity.affine_transform(m["geometry"], matrix) if transform_marker else m["geometry"]) for m in other["markers"] if _compatible(marker, m)]
-            marker_matches.append(bool(distances and min(distances) <= extent * PATH_TOLERANCE))
-    checks["point_markers"] = {"status": "observed", "same_markers": len(t["markers"]) == len(o["markers"]) and all(marker_matches), "meaning": "Point dots are optional glyphs, not mathematical point identities", "target_count": len(t["markers"]), "output_count": len(o["markers"])}
-    transform = np.array([[matrix[0], matrix[1], matrix[4]], [matrix[2], matrix[3], matrix[5]], [0, 0, 1]])
-    inverse = np.linalg.inv(transform)
-    inv = [inverse[0, 0], inverse[0, 1], inverse[1, 0], inverse[1, 1], inverse[0, 2], inverse[1, 2]]
-    visibility = []
-    for stroke in t["strokes"]:
-        baseline = _path_visibility(t, stroke["geometry"], stroke["color"], stroke["width"])
-        matching_glyph = next((item for item in aligned["strokes"] if item.get("reference_annotation_path") == stroke["path"]), None)
-        if matching_glyph is not None:
-            native = next(item for item in o["strokes"] if item["path"] == matching_glyph["path"])
-            observed = _path_visibility(o, native["geometry"], native["color"], native["width"])
+    """Check the same point/connection contract in the output's own coordinates."""
+    contract = content_contract(target) if content_requirements is None else content_requirements
+    if not isinstance(contract, list) or not all(isinstance(row, dict) for row in contract):
+        raise TypeError("content_requirements must be a list of point, segment or circle declarations")
+    required, invalid, normalized, seen = set(), [], [], set()
+    for row in contract:
+        kind = row.get("kind")
+        names = row.get("points", [] if kind == "circle" else None)
+        arity = {"point": 1, "segment": 2, "circle": 2 if names else 0}.get(kind) if isinstance(kind, str) else None
+        if (not isinstance(names, list) or len(names) != arity
+                or any(not isinstance(name, str) or not name for name in names)
+                or set(row) - ({"kind", "points"} if kind == "point" else {"kind", "points", "dashed"})
+                or (kind != "point" and not isinstance(row.get("dashed", False), bool))):
+            invalid.append(len(normalized))
         else:
-            observed = _path_visibility(o, affinity.affine_transform(stroke["geometry"], inv), stroke["color"], stroke["width"])
-        visibility.append({"target_path": stroke["path"], "target_ink_fraction": baseline, "output_ink_fraction": observed,
-                           "graded": not stroke["dashed"], "matched": observed >= baseline - 0.18})
-    checks["visibility"] = {"status": "match" if all(v["matched"] for v in visibility if v["graded"]) else "different", "paths": visibility,
-                            "meaning": "Sampled solid-stroke raster support; dashed paths are diagnostic because cadence and phase are ungraded; fill compositing is unmeasured"}
-    for kind in ("strokes", "fills"):
-        check = checks[kind]
-        components = []
-        for side in ("target", "output"):
-            records = check[side + "_coverage"]
-            components.extend(value for record in records for value in record["component_coverage"])
-        check["worst_component_coverage_pct"] = 100 * min(components) if components else None
-    return {"checks": checks, "alignment": alignment, "limitations": []}
+            key = (kind, tuple(sorted(names) if kind == "segment" else names), row.get("dashed", False))
+            if names and key in seen:
+                continue
+            seen.add(key)
+            required.update(names)
+        normalized.append(row)
+    contract = normalized
+    missing = sorted(required - output["points"].keys())
+    extra = sorted(output["points"].keys() - required)
+    unresolved = sorted(name for name in required & output["points"].keys() if output["points"][name] is None)
+    points = {"status": "different" if missing or extra else "unknown" if unresolved or invalid else "match",
+              "required": sorted(required), "missing": missing, "extra": extra, "unresolved": unresolved}
+    segments = _segments(output)
+    support = {dashed: unary_union([row["geometry"] for row in segments if row.get("dashed", False) == dashed])
+               for dashed in (False, True)}
+    expected = {False: [], True: []}
+    rows = []
+    for index, declaration in enumerate(contract):
+        if declaration.get("kind") == "circle" or (declaration.get("kind") == "point" and index not in invalid):
+            continue
+        row = {"id": index, "requirement": declaration}
+        try:
+            if index in invalid:
+                raise ValueError("Unsupported point/connection declaration")
+            line = _line(declaration, output["points"])
+            dashed = declaration.get("dashed", False)
+            expected[dashed].append(line)
+            fraction = _fraction(line, support[dashed])
+            row.update(status="match" if fraction >= COVERAGE_MINIMUM else "different", covered_fraction=fraction)
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            row.update(status="unknown", reason=str(error))
+        rows.append(row)
+    extras = []
+    for edge in _bound_edges(output):
+        line = _line(edge, output["points"])
+        fraction = _fraction(line, unary_union(expected[False] + expected[True]))
+        if fraction < COVERAGE_MINIMUM and edge not in extras:
+            extras.append(edge)
+    uncertain = invalid or unresolved or any(row["status"] == "unknown" for row in rows)
+    connections = {
+        "status": _status([row["status"] for row in rows] + (["unknown" if uncertain else "different"] if extras else [])),
+        "requirements": rows, "extra_connections": extras,
+    }
+    limitations = output.get("unsupported", [])
+    circles = _circles([row for i, row in enumerate(contract) if i not in invalid], output, geometry_space)
+    target_circles = _circles([row for i, row in enumerate(contract) if i not in invalid], target, geometry_space)
+    for index in invalid:
+        if contract[index].get("kind") == "circle":
+            for result in (circles, target_circles):
+                result["status"] = result["mathematical_status"] = "unknown"
+                result["required_count"] += 1
+                result["requirements"].append({"requirement": contract[index], "status": "unknown", "mathematical_status": "unknown",
+                                               "residual": None, "tolerance": REL_TOL, "reason": "Unsupported circle declaration"})
+    checks = {"points": points, "connections": connections, "circles": circles}
+    return {"status": _status([row["status"] for row in checks.values()] + (["unknown"] if limitations else [])),
+            "checks": checks, "contract": contract, "limitations": limitations,
+            "target_circles": target_circles}

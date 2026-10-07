@@ -169,11 +169,16 @@ def _render_row(row: Mapping[str, Any], run_dir: Path) -> str:
 def _render_evaluation(title: str, evaluation: Mapping[str, Any]) -> str:
     if "pair_comparison" in evaluation:
         comparison = evaluation["pair_comparison"]
-        rows = "".join(f"<tr><td>{html.escape(name)}</td><td><strong>{html.escape(check['status'])}</strong></td></tr>" for name, check in comparison.get("checks", {}).items())
-        return (f"<section><h3>Reference comparison: {html.escape(comparison['status'])}</h3>"
-                "<p>Reference fidelity only. The reference's correctness against the instruction is not evaluated here.</p>"
-                f"<table><thead><tr><th>Check</th><th>Observation</th></tr></thead><tbody>{rows}</tbody></table>"
-                + _json_details("Measurements, correspondence, tolerances and limitations", comparison) + "</section>")
+        rows = []
+        for name, score in comparison.get("scores", {}).items():
+            value = "Unavailable" if score is None else str(score) if name == "compile" else f"{score:.2f}%"
+            counts = comparison.get("counts", {}).get(name)
+            units = f"{counts['passed']}/{counts['total']}; {counts['unresolved']} unresolved" if counts else ""
+            rows.append(f"<tr><td>{html.escape(name)}</td><td><strong>{value}</strong></td><td>{units}</td></tr>")
+        return ("<section><h3>Evaluation scores</h3>"
+                "<table><thead><tr><th>Metric</th><th>Score</th><th>Verified units</th></tr></thead><tbody>"
+                + "".join(rows) + "</tbody></table>"
+                + _json_details("Checks and measurement evidence", comparison) + "</section>")
     if not evaluation:
         return _json_details(title, "No evaluator result recorded.")
     visible = {

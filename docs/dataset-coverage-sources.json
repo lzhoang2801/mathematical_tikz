@@ -1,0 +1,601 @@
+{
+  "selection": "dataset-selection.json",
+  "overview": "dataset-coverage-overview.png",
+  "counts_figure": "dataset-type-counts.png",
+  "image_count": 2204,
+  "geometry_types": 17,
+  "algebra_types": 6,
+  "sample_selection": "seed=2; single-label first; SHA-256 order; curated overrides: G02, G06, G07, G08, G13, G17",
+  "sources": [
+    {
+      "diagram_type": "G01",
+      "label": "Điểm, đường thẳng, đoạn thẳng, đường cong",
+      "image_id": "image-f0e3c80c26709b4f",
+      "asset_path": "assets/f0e3c80c26709b4f49fd0d0e83c5d4d8d93c5c36671b9e34b30eac99c0458b03.jpg",
+      "count": 50,
+      "sources": [
+        {
+          "source_image": "6/grade_6_sgk_2/images/757227ffc97e7cd08df1e905963aa599a432824a7a5b9d597b6422eeafea2f80.jpg",
+          "source_md": "6/grade_6_sgk_2/book.final.md",
+          "source_line": 2614,
+          "grade": 6,
+          "book": "grade_6_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G01"
+          ],
+          "decision": "selected",
+          "reason": "Crop duoc xac dinh theo chinh hinh ve va co quan he hinh hoc phu hop tai hien bang TikZ.",
+          "visual_checked": true,
+          "pdf_page": 57,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G02",
+      "label": "Tia, góc và đo góc",
+      "image_id": "image-d387e538f447e44e",
+      "asset_path": "assets/d387e538f447e44ea763dc308adb50589e7e393f39f16eaae3f297adb298b448.jpg",
+      "count": 137,
+      "sources": [
+        {
+          "source_image": "7/grade_7_sgk_1/images/c84e9357022ee639250163502961d18899c8382908bc5fe0aa7dd97c3cb4f1ac.jpg",
+          "source_md": "7/grade_7_sgk_1/book.final.md",
+          "source_line": 1839,
+          "grade": 7,
+          "book": "grade_7_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G02"
+          ],
+          "decision": "selected",
+          "reason": "Crop duoc xac dinh theo chinh hinh ve va co quan he hinh hoc phu hop tai hien bang TikZ.",
+          "visual_checked": true,
+          "pdf_page": 44,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G03",
+      "label": "Tam giác và các đường đặc biệt",
+      "image_id": "image-c4df1b5bb7aa7d99",
+      "asset_path": "assets/c4df1b5bb7aa7d99d5ee5d2eca5475be78880c5a071a9561d18a02c52d43ca01.jpg",
+      "count": 197,
+      "sources": [
+        {
+          "source_image": "7/grade_7_sgk_1/images/fc74ed91b28df69636edb5dc1c9d1e02b3c386192797738dbe7d4d90064f8af1.jpg",
+          "source_md": "7/grade_7_sgk_1/book.final.md",
+          "source_line": 3513,
+          "grade": 7,
+          "book": "grade_7_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G03"
+          ],
+          "decision": "selected",
+          "reason": "Crop duoc xac dinh theo chinh hinh ve va co quan he hinh hoc phu hop tai hien bang TikZ.",
+          "visual_checked": true,
+          "pdf_page": 81,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G04",
+      "label": "Tam giác bằng nhau",
+      "image_id": "image-4fce3d1809380dbc",
+      "asset_path": "assets/4fce3d1809380dbc6a55c78c841f222463cb6e136479d7fb8cd8d6f4254faea9.jpg",
+      "count": 23,
+      "sources": [
+        {
+          "source_image": "7/grade_7_sgk_1/images/db99b18028b650c0dcb48431a0eb931ba6e9e8f943a3fda98a3f4b343929c16b.jpg",
+          "source_md": "7/grade_7_sgk_1/book.final.md",
+          "source_line": 2852,
+          "grade": 7,
+          "book": "grade_7_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G04"
+          ],
+          "decision": "selected",
+          "reason": "Crop duoc xac dinh theo chinh hinh ve va co quan he hinh hoc phu hop tai hien bang TikZ.",
+          "visual_checked": true,
+          "pdf_page": 67,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G05",
+      "label": "Tam giác đồng dạng và Thalès",
+      "image_id": "image-1aa0a2baf0c4d379",
+      "asset_path": "assets/1aa0a2baf0c4d3791950e82ef5aceb522eeb2acb4f4a8bb95edb924084911eca.jpg",
+      "count": 140,
+      "sources": [
+        {
+          "source_image": "8/grade_8_sgk_2/images/c2e9103799d877ab2b797e9de03656152c829e1912bdb02556af3eba9b9b5b4f.jpg",
+          "source_md": "8/grade_8_sgk_2/book.final.md",
+          "source_line": 3556,
+          "grade": 8,
+          "book": "grade_8_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G05"
+          ],
+          "decision": "selected",
+          "reason": "Crop thể hiện diagram hình học/đồ thị cốt lõi gắn với nội dung Toán; hình dạng và quan hệ cần tái dựng đọc được.",
+          "visual_checked": true,
+          "pdf_page": 85,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G06",
+      "label": "Hệ thức lượng trong tam giác vuông và mô hình đo đạc",
+      "image_id": "image-839f069b429fc86a",
+      "asset_path": "assets/839f069b429fc86a709512c7e1c50e6d6b4cace4e992fb9bb05565d4a09ba3d1.jpg",
+      "count": 91,
+      "sources": [
+        {
+          "source_image": "10/grade_10_sgk_2/images/e9513bb11096aa41a317ce23ae27a7721134a84438d98097f2c7254867a6d6bf.jpg",
+          "source_md": "10/grade_10_sgk_2/full.md",
+          "source_line": 1132,
+          "grade": 10,
+          "book": "grade_10_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G06"
+          ],
+          "decision": "selected",
+          "reason": "Mô hình hai tam giác vuông cho bài toán gặp nhau qua sông.",
+          "visual_checked": true,
+          "pdf_page": 27,
+          "source_anchor": "markdown",
+          "review_sheet": "10_grade_10_sgk_2_03.png",
+          "review_item_index": 138
+        }
+      ]
+    },
+    {
+      "diagram_type": "G07",
+      "label": "Tứ giác đặc biệt",
+      "image_id": "image-1492300acd9c5830",
+      "asset_path": "assets/1492300acd9c58303cc1a4019420815619a014b6edb6adc52fb8b4cb6124a56b.jpg",
+      "count": 195,
+      "sources": [
+        {
+          "source_image": "8/grade_8_sgk_1/images/dc6f6de191e9e1200e4d1785f9c6bc033d81e6818d75648d90b2a262fea38045.jpg",
+          "source_md": "8/grade_8_sgk_1/book.final.md",
+          "source_line": 3221,
+          "grade": 8,
+          "book": "grade_8_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G07"
+          ],
+          "decision": "selected",
+          "reason": "Đã gán theo diagram trọng tâm thể hiện trong crop; không gắn nhãn phụ chỉ vì có thêm primitive hoặc do vị trí trong chương.",
+          "visual_checked": true,
+          "pdf_page": 68,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G08",
+      "label": "Đa giác đều",
+      "image_id": "image-8b3b3f08df86fd7c",
+      "asset_path": "assets/8b3b3f08df86fd7cacb10df19a1abee29dec28bbedca3c338ba164a30b3d0fab.jpg",
+      "count": 30,
+      "sources": [
+        {
+          "source_image": "9/grade_9_sgk_2/images/06274f00f96856d124e8dd1cab37e9d5c13fd9c1261308d03f20fdfbb175272d.jpg",
+          "source_md": "9/grade_9_sgk_2/book.final.md",
+          "source_line": 3323,
+          "grade": 9,
+          "book": "grade_9_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G08"
+          ],
+          "decision": "selected",
+          "reason": "Đã gán theo diagram trọng tâm thể hiện trong crop; không gắn nhãn phụ chỉ vì có thêm primitive hoặc do vị trí trong chương.",
+          "visual_checked": true,
+          "pdf_page": 86,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G09",
+      "label": "Đường tròn và dựng hình",
+      "image_id": "image-a19196972c4f3206",
+      "asset_path": "assets/a19196972c4f3206896199701466904d61716b2e4acd1affb85eabd6fa206cd1.jpg",
+      "count": 47,
+      "sources": [
+        {
+          "source_image": "9/grade_9_sgk_1/images/20a6a15f705b130b5342d24486eec222bf2db1d907ceb75185b42fcfefdc594c.jpg",
+          "source_md": "9/grade_9_sgk_1/book.final.md",
+          "source_line": 3989,
+          "grade": 9,
+          "book": "grade_9_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G09"
+          ],
+          "decision": "selected",
+          "reason": "Đã gán theo diagram trọng tâm thể hiện trong crop; không gắn nhãn phụ chỉ vì có thêm primitive hoặc do vị trí trong chương.",
+          "visual_checked": true,
+          "pdf_page": 97,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G10",
+      "label": "Góc trong đường tròn và tứ giác nội tiếp",
+      "image_id": "image-56eabc29424f7c8d",
+      "asset_path": "assets/56eabc29424f7c8d00980dc920c20c8d22d3cf26fb8e8a7dd6cdcbf281d800d6.jpg",
+      "count": 44,
+      "sources": [
+        {
+          "source_image": "9/grade_9_sgv/images/37c38e088ffe8c824cec0c3cb4fcd5cb66188b645f490729d6964107466c3bd8.jpg",
+          "source_md": "9/grade_9_sgv/book.final.md",
+          "source_line": 6064,
+          "grade": 9,
+          "book": "grade_9_sgv",
+          "book_role": "sgv",
+          "diagram_types": [
+            "G10"
+          ],
+          "decision": "selected",
+          "reason": "Đã gán theo diagram trọng tâm thể hiện trong crop; không gắn nhãn phụ chỉ vì có thêm primitive hoặc do vị trí trong chương.",
+          "visual_checked": true,
+          "pdf_page": 250,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G11",
+      "label": "Tiếp tuyến và vị trí tương đối đường thẳng–đường tròn",
+      "image_id": "image-912e2b72f6cfbc2b",
+      "asset_path": "assets/912e2b72f6cfbc2b81e51d047f2df8aa5327a67e5d3493063966740fb39f1b74.jpg",
+      "count": 36,
+      "sources": [
+        {
+          "source_image": "9/grade_9_sgk_1/images/60635388376ed6807787d911e4dbee554c7884f272f7cdd137778540a1cdae66.jpg",
+          "source_md": "9/grade_9_sgk_1/book.final.md",
+          "source_line": 4197,
+          "grade": 9,
+          "book": "grade_9_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G11"
+          ],
+          "decision": "selected",
+          "reason": "Đã gán theo diagram trọng tâm thể hiện trong crop; không gắn nhãn phụ chỉ vì có thêm primitive hoặc do vị trí trong chương.",
+          "visual_checked": true,
+          "pdf_page": 103,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G12",
+      "label": "Vectơ và các phép toán",
+      "image_id": "image-c5093803423b912d",
+      "asset_path": "assets/c5093803423b912d93b34341c7ca0f045c2e055c2b2fb718d78ac4794903becf.jpg",
+      "count": 98,
+      "sources": [
+        {
+          "source_image": "10/grade_10_sgk_1/images/c043929580f19debfa6592c6596a77f8d83e402abf185753b6547ba1277c6533.jpg",
+          "source_md": "10/grade_10_sgk_1/full.md",
+          "source_line": 3063,
+          "grade": 10,
+          "book": "grade_10_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G12"
+          ],
+          "decision": "selected",
+          "reason": "Đã xem crop trên sheet03; diagram toán học phù hợp loại ghi nhận.",
+          "visual_checked": true,
+          "pdf_page": 67,
+          "source_anchor": "markdown",
+          "review_sheet": "10_grade_10_sgk_1_03.png",
+          "review_item_index": 150
+        }
+      ]
+    },
+    {
+      "diagram_type": "G13",
+      "label": "Hình học tọa độ Oxy, đường thẳng, đường tròn, conic",
+      "image_id": "image-5573da6f7b3ea9f2",
+      "asset_path": "assets/5573da6f7b3ea9f25ad9497ae31b78597195bb374a009accb4704c9c42e3dc14.jpg",
+      "count": 68,
+      "sources": [
+        {
+          "source_image": "10/grade_10_sgk_2/images/93b4d04b532bee4ab23efe05463c275c583c9ba5225a9253bdd36291b1ca5df4.jpg",
+          "source_md": "10/grade_10_sgk_2/full.md",
+          "source_line": 2070,
+          "grade": 10,
+          "book": "grade_10_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G13"
+          ],
+          "decision": "selected",
+          "reason": "Elip, tiêu điểm và điểm M trên hệ tọa độ Oxy.",
+          "visual_checked": true,
+          "pdf_page": 50,
+          "source_anchor": "markdown",
+          "review_sheet": "10_grade_10_sgk_2_02.png",
+          "review_item_index": 91
+        }
+      ]
+    },
+    {
+      "diagram_type": "G14",
+      "label": "Phép biến hình phẳng",
+      "image_id": "image-4187c187216721c5",
+      "asset_path": "assets/4187c187216721c52745faa65d3f88454b91792cd5f60dd7c6be3f41173ae0f1.jpg",
+      "count": 186,
+      "sources": [
+        {
+          "source_image": "11/grade_11_sgk_cd/images/9119ffe696f4caa1dacad291425c5321a21a4cd7a952d7327fb1422d3108b4d4.jpg",
+          "source_md": "11/grade_11_sgk_cd/full.md",
+          "source_line": 442,
+          "grade": 11,
+          "book": "grade_11_sgk_cd",
+          "book_role": "sgk_cd",
+          "diagram_types": [
+            "G14"
+          ],
+          "decision": "selected",
+          "reason": "Sơ đồ phép biến hình, hình khối hoặc phép chiếu đã đối chiếu crop và nội dung nguồn.",
+          "visual_checked": true,
+          "pdf_page": 15,
+          "source_anchor": "markdown",
+          "review_sheet": "11_grade_11_sgk_cd_03.png",
+          "review_item_index": 179
+        }
+      ]
+    },
+    {
+      "diagram_type": "G15",
+      "label": "Khối đa diện và khối tròn xoay",
+      "image_id": "image-f1a7c51c0fd9c5a3",
+      "asset_path": "assets/f1a7c51c0fd9c5a34acf329d467ba2ad259e743ac65ad3bb0ac78deccd4b1f4d.jpg",
+      "count": 275,
+      "sources": [
+        {
+          "source_image": "8/grade_8_sgk_2/images/61b72c39d574d33845557bb342c52e0e1df44fca5453cb6340495982535b606e.jpg",
+          "source_md": "8/grade_8_sgk_2/book.final.md",
+          "source_line": 4827,
+          "grade": 8,
+          "book": "grade_8_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G15"
+          ],
+          "decision": "selected",
+          "reason": "Crop thể hiện diagram hình học/đồ thị cốt lõi gắn với nội dung Toán; hình dạng và quan hệ cần tái dựng đọc được.",
+          "visual_checked": true,
+          "pdf_page": 117,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "G16",
+      "label": "Quan hệ, thiết diện, góc và khoảng cách trong không gian",
+      "image_id": "image-607bdb9342a6be95",
+      "asset_path": "assets/607bdb9342a6be950234c6ac6ca3e77f7b65bb4fa47cd4c3476928e3307f40d9.jpg",
+      "count": 283,
+      "sources": [
+        {
+          "source_image": "11/grade_11_sgk_cd/images/223cf68ee7e169697d9a765812ca5216d39ae04a41ec64fac7eae909cbae706b.jpg",
+          "source_md": "11/grade_11_sgk_cd/full.md",
+          "source_line": 1983,
+          "grade": 11,
+          "book": "grade_11_sgk_cd",
+          "book_role": "sgk_cd",
+          "diagram_types": [
+            "G16"
+          ],
+          "decision": "selected",
+          "reason": "Đã xem crop; phép biến hình hoặc hình học không gian/chiếu hình học phù hợp loại ghi nhận.",
+          "visual_checked": true,
+          "pdf_page": 54,
+          "source_anchor": "markdown",
+          "review_sheet": "11_grade_11_sgk_cd_01.png",
+          "review_item_index": 47
+        }
+      ]
+    },
+    {
+      "diagram_type": "G17",
+      "label": "Hệ tọa độ và đối tượng Oxyz",
+      "image_id": "image-a63da0c960a3aa26",
+      "asset_path": "assets/a63da0c960a3aa26fa892aa07f76c5b5a97bbfb03f3b6c548c616e1926c67c62.jpg",
+      "count": 40,
+      "sources": [
+        {
+          "source_image": "12/grade_12_sgk_1/images/1a1124ac7b58f7a7a6459e3f4d60642013f54b88c4d2ab5e9e726621e6e441f5.jpg",
+          "source_md": "12/grade_12_sgk_1/full.md",
+          "source_line": 2457,
+          "grade": 12,
+          "book": "grade_12_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "G17"
+          ],
+          "decision": "selected",
+          "reason": "Hệ toạ độ Oxyz và đối tượng không gian theo toạ độ.",
+          "visual_checked": true,
+          "pdf_page": 62,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "A01",
+      "label": "Đồ thị hàm số",
+      "image_id": "image-e400ad86a288fad5",
+      "asset_path": "assets/e400ad86a288fad5363cb78169e40bbc2a6d57fd2aa0317de885c0ef0bc0e91d.jpg",
+      "count": 167,
+      "sources": [
+        {
+          "source_image": "12/grade_12_sgk_cd/images/9d7ef571563e45e91617d1ef9c91d43ad2a00fe55e06b135a2da2d1f968b851d.jpg",
+          "source_md": "12/grade_12_sgk_cd/full.md",
+          "source_line": 1489,
+          "grade": 12,
+          "book": "grade_12_sgk_cd",
+          "book_role": "sgk_cd",
+          "diagram_types": [
+            "A01"
+          ],
+          "decision": "selected",
+          "reason": "Đồ thị hàm số được trình bày trong bài đại số/giải tích.",
+          "visual_checked": true,
+          "pdf_page": 38,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "A02",
+      "label": "Bảng biến thiên và bảng xét dấu",
+      "image_id": "image-9b356c137a2f7927",
+      "asset_path": "assets/9b356c137a2f7927722f9fd7cae744699d66ab7873c65ab722e73ebd2dbb46cc.jpg",
+      "count": 71,
+      "sources": [
+        {
+          "source_image": "12/grade_12_sgv/images/c1af4b39379cf4a449e601f3024830c1fa8651dd32554aafd73f4599a52061fc.jpg",
+          "source_md": "12/grade_12_sgv/full.md",
+          "source_line": null,
+          "grade": 12,
+          "book": "grade_12_sgv",
+          "book_role": "sgv",
+          "diagram_types": [
+            "A02"
+          ],
+          "decision": "selected",
+          "reason": "Crop bảng biến thiên/xét dấu được layout liên kết với bài khảo sát hàm số; đã xem ảnh thực tế.",
+          "visual_checked": true,
+          "pdf_page": 38,
+          "source_anchor": "layout",
+          "source_layout": "12/grade_12_sgv/layout.json"
+        }
+      ]
+    },
+    {
+      "diagram_type": "A03",
+      "label": "Đường tròn lượng giác",
+      "image_id": "image-ee1c9b0429ba8af5",
+      "asset_path": "assets/ee1c9b0429ba8af569865c9388b065133a9711bb7f6f0497376c690ac593c6f0.jpg",
+      "count": 25,
+      "sources": [
+        {
+          "source_image": "10/grade_10_sgv/images/1b16bc1d5fcb02fe0d0d512bb728f41d81dba61286fcb9f8c078f2a946088eae.jpg",
+          "source_md": "10/grade_10_sgv/full.md",
+          "source_line": 1546,
+          "grade": 10,
+          "book": "grade_10_sgv",
+          "book_role": "sgv",
+          "diagram_types": [
+            "A03"
+          ],
+          "decision": "selected",
+          "reason": "Đồ thị, miền nghiệm, trục số hoặc sơ đồ hình học có đối tượng/quan hệ toán rõ; đã đối chiếu crop và nội dung.",
+          "visual_checked": true,
+          "pdf_page": 82,
+          "source_anchor": "markdown",
+          "review_sheet": "10_grade_10_sgv_01.png",
+          "review_item_index": 20
+        }
+      ]
+    },
+    {
+      "diagram_type": "A04",
+      "label": "Khoảng, điểm và dấu trên trục số",
+      "image_id": "image-2d550d13353e6e43",
+      "asset_path": "assets/2d550d13353e6e43a86a2126823c913911bdfc9e25fd633aa4b23f6804fdbd04.jpg",
+      "count": 44,
+      "sources": [
+        {
+          "source_image": "6/grade_6_sgk_1/images/c603ad6253ae8f355fce612a690e4d6ccb427f0ba2cde4cae993dcb789548b7d.jpg",
+          "source_md": "6/grade_6_sgk_1/book.final.md",
+          "source_line": 3234,
+          "grade": 6,
+          "book": "grade_6_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "A04"
+          ],
+          "decision": "selected",
+          "reason": "Crop duoc xac dinh theo chinh hinh ve va co quan he hinh hoc phu hop tai hien bang TikZ.",
+          "visual_checked": true,
+          "pdf_page": 64,
+          "source_anchor": "markdown"
+        }
+      ]
+    },
+    {
+      "diagram_type": "A05",
+      "label": "Miền nghiệm bất phương trình",
+      "image_id": "image-09a1149a2fdff04f",
+      "asset_path": "assets/09a1149a2fdff04fa6a69b3252871c3c69e15c8fc0b6fa533b9a5574366cab7f.jpg",
+      "count": 46,
+      "sources": [
+        {
+          "source_image": "10/grade_10_sgk_1/images/e59d1802301ea92f10ddac73ede16dc2b4ceb29eec04be78629919bc9908706c.jpg",
+          "source_md": "10/grade_10_sgk_1/full.md",
+          "source_line": 1285,
+          "grade": 10,
+          "book": "grade_10_sgk_1",
+          "book_role": "sgk",
+          "diagram_types": [
+            "A05"
+          ],
+          "decision": "selected",
+          "reason": "Đã xem crop trên sheet03; diagram toán học phù hợp loại ghi nhận.",
+          "visual_checked": true,
+          "pdf_page": 25,
+          "source_anchor": "markdown",
+          "review_sheet": "10_grade_10_sgk_1_03.png",
+          "review_item_index": 190
+        }
+      ]
+    },
+    {
+      "diagram_type": "A06",
+      "label": "Miền tô tích phân",
+      "image_id": "image-856a730cce9f913e",
+      "asset_path": "assets/856a730cce9f913e294eb4c10d0e3f7a5b13376c64fcdbcd5d2d92159c778a72.jpg",
+      "count": 21,
+      "sources": [
+        {
+          "source_image": "12/grade_12_sgk_2/images/c33e935c84bb30b67f5c7f2d7fa0720dd57e74d592edee9b1a2b19963c04a920.jpg",
+          "source_md": "12/grade_12_sgk_2/full.md",
+          "source_line": 549,
+          "grade": 12,
+          "book": "grade_12_sgk_2",
+          "book_role": "sgk",
+          "diagram_types": [
+            "A06"
+          ],
+          "decision": "selected",
+          "reason": "Miền phẳng tô bóng gắn với tích phân, được đối chiếu với mục bài học.",
+          "visual_checked": true,
+          "pdf_page": 15,
+          "source_anchor": "markdown"
+        }
+      ]
+    }
+  ]
+}

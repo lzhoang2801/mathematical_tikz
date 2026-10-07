@@ -7,7 +7,7 @@ import json
 import logging
 import platform
 import statistics
-from collections import Counter, defaultdict
+from collections import defaultdict
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -15,7 +15,8 @@ from typing import Any
 import httpx
 from agent.latex.tikz import standalone_tikz_document
 
-from evaluation.evaluator import VERSION, evaluate, observe_tikz
+from evaluation.evaluator import VERSION, evaluate
+from evaluation.tikz_observations import compile_observe as observe_tikz
 from evaluation.tikz_preview import write_preview
 
 logger = logging.getLogger(__name__)
@@ -69,43 +70,39 @@ def summarize(cases: list[dict[str, Any]], results: list[dict[str, Any]]) -> lis
             raise ValueError("Result metadata differs from its planned case")
         comparison = result.get("comparison", {})
         for role in ("target", "output"):
-            expected = comparison.get("evidence", {}).get(role, {}).get("source", {}).get("input_tikz_sha256")
+            expected = comparison.get("source_hashes", {}).get(role)
             if expected and role + "_tikz" in case and expected != _digest(case[role + "_tikz"].encode()):
                 raise ValueError(f"Stale {role} evidence: {case['id']}")
-        controlled = case.get("expected_status") is not None or bool(case.get("expected_checks"))
-        cohort = "controls" if controlled else "model_outputs" if case.get("worker_path") or case.get("system_id") else "candidates"
+        cohort = case.get("cohort") or ("model_outputs" if case.get("worker_path") or case.get("system_id") else "candidates")
         system = case.get("system_id") or (str(Path(case["worker_path"]).parent.parent) if case.get("worker_path") else "unspecified")
-        generation = case.get("generation_status", "missing_saved_output" if case.get("worker_unavailable") else "supplied_output")
-        status = "generation_failed" if generation in GENERATION_FAILURES else comparison.get("status", "not_evaluated")
-        partitions[(cohort, system, split, case["task"])].append((case, comparison, status))
+        partitions[(cohort, system, split, case["task"])].append((case, comparison))
     summaries = []
     for (cohort, system, split, task), rows in sorted(partitions.items()):
-        counts = Counter(status for _, _, status in rows)
-        observed = counts["match"] + counts["different"] + counts["generation_failed"]
         summary = {"cohort": cohort, "system_id": system, "split": split, "task": task,
-                   "n_scheduled": len(rows), "n_results": sum(case["id"] in result_by_id for case, _, _ in rows),
-                   "n_source_groups": len({case["source_group"] for case, _, _ in rows}), "status_counts": dict(counts),
-                   "success_pct_observed": 100 * counts["match"] / observed if observed else None,
-                   "coverage_pct": 100 * observed / len(rows), "metrics": {}}
-        names = sorted({name for _, comparison, _ in rows for name in comparison.get("metrics", {})})
-        for name in names:
-            states, values, groups = Counter(), [], defaultdict(list)
-            for case, comparison, _ in rows:
-                metric = comparison.get("metrics", {}).get(name, {"state": "unavailable", "value": None})
-                states[metric["state"]] += 1
-                if metric["state"] == "observed" and metric["value"] is not None:
-                    values.append(metric["value"])
-                    groups[case["source_group"]].append(metric["value"])
-            summary["metrics"][name] = {"state_counts": dict(states), "mean_observed": statistics.fmean(values) if values else None,
-                                        "source_group_mean_observed": statistics.fmean(statistics.fmean(values) for values in groups.values()) if groups else None,
-                                        "n_source_groups_observed": len(groups)}
+                   "n_scheduled": len(rows), "n_results": sum(case["id"] in result_by_id for case, _ in rows),
+                   "n_source_groups": len({case["source_group"] for case, _ in rows}),
+                   "generation_failures": sum(case.get("generation_status") in GENERATION_FAILURES for case, _ in rows),
+                   "scores": {}}
+        for name in ("compile", "mathematical_correctness", "content_coverage", "visual_readability"):
+            values, groups = [], defaultdict(list)
+            for case, comparison in rows:
+                value = comparison.get("scores", {}).get(name)
+                if value is not None:
+                    values.append(value)
+                    groups[case["source_group"]].append(value)
+            summary["scores"][name] = {
+                "mean": statistics.fmean(values) if values else None,
+                "source_group_mean": statistics.fmean(statistics.fmean(group) for group in groups.values()) if groups else None,
+                "available": len(values), "missing": len(rows) - len(values),
+                "unresolved_units": sum(comparison.get("counts", {}).get(name, {}).get("unresolved", 0) for _, comparison in rows),
+            }
         summaries.append(summary)
     return summaries
 
 
 def _snapshot_sources(output: Path) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     hashes, sources = {}, {}
-    for name in ("evaluator.py", "tikz_geometry.py", "tikz_coverage.py", "tikz_observations.py", "tikz_annotations.py", "tikz_readability.py", "run.py"):
+    for name in ("evaluator.py", "tikz_geometry.py", "tikz_coverage.py", "tikz_observations.py", "tikz_readability.py", "run.py"):
         source = Path(__file__).with_name(name)
         digest = _digest(source.read_bytes())
         snapshot = output / "evaluator-sources" / digest / name
@@ -115,24 +112,10 @@ def _snapshot_sources(output: Path) -> tuple[dict[str, str], dict[str, dict[str,
     return hashes, sources
 
 
-def _control_results(cases: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, Any]:
-    by_id = {row["id"]: row for row in results}
-    confusion, disagreements = Counter(), []
-    for case in cases:
-        result = by_id.get(case["id"], {})
-        if case.get("expected_status") is not None:
-            actual = result.get("status", "not_evaluated")
-            expected = case["expected_status"]
-            confusion[(expected, actual)] += 1
-            if expected != actual:
-                disagreements.append({"id": case["id"], "check": "overall", "expected": expected, "actual": actual})
-        for name, expected in case.get("expected_checks", {}).items():
-            actual = result.get("checks", {}).get(name, "not_evaluated")
-            if expected != actual:
-                disagreements.append({"id": case["id"], "check": name, "expected": expected, "actual": actual})
-    return {"confusion": [{"expected": expected, "actual": actual, "count": count} for (expected, actual), count in sorted(confusion.items())],
-            "disagreements": disagreements, "source_groups": len({case["source_group"] for case in cases}),
-            "meaning": "Developer-declared controlled cases; not independent human judgments or a held-out accuracy estimate"}
+def _evaluate_case(case: dict[str, Any], target: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    return evaluate(target, output, evaluation_rubric=case.get("evaluation_rubric"),
+                    geometry_space=case.get("geometry_space", "euclidean_2d"),
+                    content_requirements=case.get("content_requirements"))
 
 
 def run(cases_path: Path, output: Path, worker_runs: list[Path] | None = None) -> Path:
@@ -158,7 +141,7 @@ def run(cases_path: Path, output: Path, worker_runs: list[Path] | None = None) -
                 worker["saved_result_sha256"] = _digest(worker_path.read_bytes())
             else:
                 worker = {"error": "Requested worker result is missing"}
-            cases.append({**original, "id": original["id"].replace("identity", "native-worker-" + worker_run.name), "variant": f"native worker output saved in {worker_run} (comparison makes no model call)", "output_tikz": worker.get("tikz") or "", "worker": worker, "worker_path": str(worker_path), "worker_manifest_path": str(manifest_path.resolve()), "worker_manifest_sha256": _digest(manifest_path.read_bytes()), "worker_unavailable": not worker_path.is_file(), "system_id": str(worker_run.resolve()), "generation_status": "missing_saved_output" if not worker_path.is_file() else "returned_tikz" if worker.get("tikz") else "generation_failed" if worker.get("error") else "missing_tikz", "expected_checks": {}, "expected_status": None, "preparation_route": "saved_native_output"})
+            cases.append({**original, "id": original["id"].replace("identity", "native-worker-" + worker_run.name), "variant": f"native worker output saved in {worker_run} (comparison makes no model call)", "output_tikz": worker.get("tikz") or "", "worker": worker, "worker_path": str(worker_path), "worker_manifest_path": str(manifest_path.resolve()), "worker_manifest_sha256": _digest(manifest_path.read_bytes()), "worker_unavailable": not worker_path.is_file(), "system_id": str(worker_run.resolve()), "generation_status": "missing_saved_output" if not worker_path.is_file() else "returned_tikz" if worker.get("tikz") else "generation_failed" if worker.get("error") else "missing_tikz", "cohort": "model_outputs", "preparation_route": "saved_native_output"})
     if len({row["id"] for row in cases}) != len(cases):
         raise ValueError("Duplicate case IDs after merging worker runs")
     output = output.resolve()
@@ -170,12 +153,11 @@ def run(cases_path: Path, output: Path, worker_runs: list[Path] | None = None) -
     inputs_hash = _digest((output / "inputs.json").read_bytes())
     evaluator_hashes, evaluator_sources = _snapshot_sources(output)
     runtime = {"python": platform.python_version(), **{name: version(name) for name in ("numpy", "shapely", "PyMuPDF", "httpx")}}
-    comparator_hash = evaluator_hashes["evaluator.py"]
     with httpx.Client(base_url="http://127.0.0.1:18080", timeout=200, trust_env=False) as compiler:
         ready = compiler.get("/readyz")
         ready.raise_for_status()
         toolchain = ready.json()["toolchain_id"]
-        profile = {"toolchain_id": toolchain, "observer_sha256": evaluator_hashes["tikz_observations.py"], "annotation_probe_sha256": evaluator_hashes["tikz_annotations.py"], "wrapper_sha256": _digest(standalone_tikz_document(r"\begin{tikzpicture}\end{tikzpicture}").encode())}
+        profile = {"toolchain_id": toolchain, "observer_sha256": evaluator_hashes["tikz_observations.py"], "wrapper_sha256": _digest(standalone_tikz_document(r"\begin{tikzpicture}\end{tikzpicture}").encode())}
         profile_path = output / "compiler-profile.json"
         if profile_path.exists() and json.loads(profile_path.read_text(encoding="utf-8")) != profile:
             raise ValueError("Compiler profile changed: choose a fresh output directory")
@@ -199,13 +181,15 @@ def run(cases_path: Path, output: Path, worker_runs: list[Path] | None = None) -
         for row in cases:
             target = observe(row["target_tikz"])
             produced = {"compile_success": False, "compile": {"outcome": "unknown"}} if row.get("worker_unavailable") or row.get("generation_status") in GENERATION_FAILURES | {"missing_saved_output"} else observe(row["output_tikz"])
-            comparison = evaluate(target, produced, evaluation_rubric=row.get("evaluation_rubric"), **row.get("evaluation_policy", {}))
-            results.append({"id": row["id"], "task": row["task"], "variant": row["variant"], "status": comparison["status"], "checks": {name: check["status"] for name, check in comparison["checks"].items()}, "expected_checks": row.get("expected_checks", {}), "expected_status": row.get("expected_status"), "source_group": row.get("source_group"), "comparison": comparison})
+            comparison = _evaluate_case(row, target, produced)
+            results.append({"id": row["id"], "task": row["task"], "source_group": row["source_group"], "comparison": comparison})
             reviews.append({"candidate": row, "source": {"source_image_path": row.get("source_image_path"), "provenance": row.get("provenance")}, "target": {**target, "tikz": row["target_tikz"], "compiler": target.get("compile")}, "current": {**observe(row["current_tikz"]), "tikz": row["current_tikz"]} if row.get("current_tikz") else {}, "output": {**produced, "tikz": row["output_tikz"], "pair_comparison": comparison}, "worker": row.get("worker", {})})
-            logger.info("%s", json.dumps({"id": row["id"], "status": comparison["status"], "checks": results[-1]["checks"]}))
+            logger.info("%s", json.dumps({"id": row["id"], **comparison["scores"]}))
             _save(output / "review.json", reviews)
             write_preview(reviews, output)
-    report = {"evaluator_sha256": evaluator_hashes, "evaluator_sources": evaluator_sources, "runtime": runtime, "controlled_validation": _control_results(cases, results), "comparator_version": VERSION, "comparator_sha256": comparator_hash, "cases_sha256": _digest(cases_path.read_bytes()), "compiler_profile": profile, "scope": "Development cases only; no held-out accuracy estimate or target approval", "counts": dict(Counter(row["status"] for row in results)), "results": results}
+    report = {"evaluator_sha256": evaluator_hashes, "evaluator_sources": evaluator_sources, "runtime": runtime,
+              "comparator_version": VERSION, "cases_sha256": _digest(cases_path.read_bytes()),
+              "compiler_profile": profile, "results": results}
     report["inputs_sha256"] = inputs_hash
     _save(output / "report.json", report)
     _save(output / "summary.json", summarize(cases, results))
@@ -232,7 +216,7 @@ def rescore(report_path: Path, output: Path) -> Path:
         review = review_by_id.get(case["id"])
         if review is None:
             continue
-        if any(review["candidate"].get(key) != case.get(key) for key in ("task", "instruction", "current_tikz", "source_image_path", "evaluation_rubric")):
+        if any(review["candidate"].get(key) != case.get(key) for key in ("task", "instruction", "current_tikz", "source_image_path", "evaluation_rubric", "geometry_space", "diagram_types", "content_requirements")):
             raise ValueError("Saved review input differs from the planned case")
         for role in ("target", "output"):
             observation = review[role]
@@ -240,16 +224,16 @@ def rescore(report_path: Path, output: Path) -> Path:
                 raise ValueError("Saved review differs from the planned TikZ")
             if observation.get("metadata") or observation.get("compile_success") or observation.get("pdf_path"):
                 verify_cached_observation(observation, case[role + "_tikz"])
-        comparison = evaluate(review["target"], review["output"], evaluation_rubric=case.get("evaluation_rubric"), **case.get("evaluation_policy", {}))
-        results.append({"id": case["id"], "task": case["task"], "source_group": case["source_group"], "variant": case.get("variant"),
-                        "expected_checks": case.get("expected_checks", {}), "expected_status": case.get("expected_status"),
-                        "status": comparison["status"], "checks": {name: check["status"] for name, check in comparison["checks"].items()}, "comparison": comparison})
+        comparison = _evaluate_case(case, review["target"], review["output"])
+        results.append({"id": case["id"], "task": case["task"], "source_group": case["source_group"], "comparison": comparison})
         refreshed.append({**review, "output": {**review["output"], "pair_comparison": comparison}})
     hashes, sources = _snapshot_sources(output)
     _save(output / "inputs.json", cases)
     _save(output / "review.json", refreshed)
-    _save(output / "report.json", {**report, "comparator_version": VERSION, "comparator_sha256": hashes["evaluator.py"], "evaluator_sha256": hashes, "evaluator_sources": sources, "controlled_validation": _control_results(cases, results),
-                                  "inputs_sha256": _digest((output / "inputs.json").read_bytes()), "results": results, "counts": dict(Counter(row["status"] for row in results)),
+    _save(output / "report.json", {"comparator_version": VERSION, "evaluator_sha256": hashes, "evaluator_sources": sources,
+                                  "runtime": {"python": platform.python_version(), **{name: version(name) for name in ("numpy", "shapely", "PyMuPDF", "httpx")}},
+                                  "compiler_profile": report.get("compiler_profile"),
+                                  "inputs_sha256": _digest((output / "inputs.json").read_bytes()), "results": results,
                                   "rescored_from": {"path": str(report_path.resolve()), "sha256": _digest(report_path.read_bytes())}})
     _save(output / "summary.json", summarize(cases, results))
     write_preview(refreshed, output)
@@ -260,17 +244,13 @@ def main() -> None:
     """Run the local development comparison CLI."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cases", type=Path, default=Path("docs/dataset-selection/tikz-pair-demo.jsonl"))
-    parser.add_argument("--report", type=Path, help="Re-evaluate adjacent inputs.json and review.json offline")
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--cases", type=Path, help="Frozen cases for the current evaluation contract")
+    inputs.add_argument("--report", type=Path, help="Re-evaluate adjacent inputs.json and review.json offline")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--worker-run", type=Path, action="append")
-    parser.add_argument("--check", action="store_true", help="Exit nonzero if controlled expectations disagree")
     args = parser.parse_args()
     logger.info("Result: %s", rescore(args.report, args.output) if args.report else run(args.cases, args.output, args.worker_run))
-    if args.check:
-        report = json.loads((args.output / "report.json").read_text(encoding="utf-8"))
-        if report["controlled_validation"]["disagreements"]:
-            raise SystemExit(1)
 
 
 if __name__ == "__main__":
