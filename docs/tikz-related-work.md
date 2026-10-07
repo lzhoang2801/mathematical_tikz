@@ -1,6 +1,6 @@
 # Related works: TikZ harness, verification và dữ liệu fine-tuning
 
-Chốt tìm kiếm **2026-09-28**. Tổng hợp **10 paper PDF local và 16 công trình bổ sung**, với mức độ đọc khác nhau được ghi tại [sổ nguồn](papers/README.md). Đây là focused scoping review; không tuyên bố exhaustive coverage hoặc novelty “đầu tiên”. ID P01–P10/R01–R16 chỉ để nối evidence với experiments trong [research protocol](tikz-research-protocol.md).
+Chốt tìm kiếm **2026-09-28**. Tổng hợp **10 paper PDF local và 16 công trình bổ sung**, với mức độ đọc khác nhau được ghi tại [sổ nguồn](papers/README.md). Đây là focused scoping review; không tuyên bố exhaustive coverage hoặc novelty “đầu tiên”. Current implementation: [evaluation methodology](evaluation.md).
 
 ## 1. Luận điểm nghiên cứu rút ra
 

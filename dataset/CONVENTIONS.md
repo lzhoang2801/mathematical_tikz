@@ -112,52 +112,11 @@ Apply the entire `Relation marks` section of the prompt when producing the targe
 
 Inspect the actual render for every applicable mark: presence, correct carrier/vertex and angle sector, consistent patterns within an equality class and distinct patterns for unrelated classes, attached angle text when requested, and readability. Compilation or correct coordinates alone do not satisfy these requirements. Missing, misplaced or inconsistent required marks keep the target a candidate until corrected; record the review separately.
 
-## 4. Shared evaluation and pair-specific requirements
+## 4. Shared evaluation and target review
 
-Use the shared evaluator described in [docs/evaluation.md](../docs/evaluation.md). Compile, target-relative rendered content and output collisions use the common implementation. Do not create repeated prose criteria for those dimensions in every row.
+Use `evaluate(target_tikz, output_tikz)` and the four scores in [docs/evaluation.md](../docs/evaluation.md). Relations come from the observed target; instruction, taxonomy and rubric fields are not scoring inputs.
 
-Mathematical predicates such as `perpendicular` and `equal_length` test the relation, not the presence of its symbol. Rendered-content comparison checks marks against the target; it cannot establish that a required mark omitted from both target and output should have been present. Enforce the shared relation-mark convention when reviewing targets rather than treating a mathematical predicate pass as evidence of complete notation.
-
-Retain the existing `evaluation_rubric` field for the small list of pair-specific mathematical requirements. Its entries use the evaluator's current structure:
-
-```json
-{
-  "id": "altitude_h",
-  "dimension": "mathematical_correctness",
-  "requirement": "H lies on the supporting line BC and AH is perpendicular to BC.",
-  "checks": [
-    {"op": "collinear", "points": ["H", "B", "C"]},
-    {"op": "perpendicular", "points": ["A", "H", "B", "C"]}
-  ]
-}
-```
-
-This is a convention example, not a dataset row. `requirement` records the meaning; `checks` execute it. All checks in an entry must hold. Criterion IDs are unique within a row. Do not infer strict `between` from an altitude definition when the foot may be on the extension. For Edit, requirements describe the completed diagram and include the mathematical invariants that must be preserved.
-
-Supported predicates and operand order are owned by [evaluation/tikz_geometry.py](../evaluation/tikz_geometry.py):
-
-| Predicate | Ordered points and meaning |
-| --- | --- |
-| `perpendicular`, `parallel` | `[A,B,C,D]`: compare the lines with directions `AB` and `CD`. |
-| `equal_length`, `length_ratio`, `shorter` | `[A,B,C,D]`: compare `|AB|` and `|CD|`; `length_ratio` requires a positive finite `value = |AB|/|CD|`; `shorter` is strict. |
-| `collinear` | `[A,B,C]`. |
-| `midpoint` | `[M,A,B]`: `M` is the midpoint of `AB`. |
-| `distinct` | `[P,Q]`: explicitly require two named points to differ; unrelated coincident points remain allowed. |
-| `between` | `[P,A,B]`: `P` is strictly inside segment `AB`. |
-| `same_ray` | `[P,O,A]`: `P` lies on ray `OA` and differs from `O`. |
-| `on_circle`, `outside_circle` | `[P,O,A]`: circle centre `O`, radius `|OA|`; for membership use an independent radius witness, not `P=A`. |
-| `minor_arc` | `[P,O,A,B]`: `P` lies strictly inside minor arc `AB` of the circle centred at `O`; the minor arc must be defined. |
-| `concyclic` | `[A,B,C,D]`: four distinct concyclic points. |
-| `tangent` | `[O,R,A,B]`: line `AB` tangent to the circle centred at `O`, radius `|OR|`; this does not specify the contact point by itself. |
-| `tangent_circumcircle` | `[A,B,C,D,E]`: line `AB` tangent to the circumcircle through noncollinear `C,D,E`. |
-
-Checks use actual visible mathematical point labels, including their true primes/subscripts where supported by extraction, rather than TikZ helper variable names. Do not add visible helper labels only to satisfy a predicate. Never substitute a tautological check for a missing check.
-
-Record only conditions required by the instruction or its defining constructions, not all theorems true of the target. Shared evaluator tolerances apply; do not tune per-row tolerances after observing a failure. An empty entire list is allowed only when there is no additional pair-specific mathematical requirement, with the reason recorded in review notes; it is not a way to omit unsupported givens.
-
-For an unsupported mathematical requirement, retain an entry with its real `requirement` and `checks: []`, and record independent review evidence. Do not invent an operator or represent unknown as pass. Point predicates alone do not verify a painted circle, numeric-label attachment, a general angle constraint or a 3D relation. Inspect the target and record the evidence needed for those properties. Screen-space checks must not be used to certify spatial perpendicularity.
-
-The current evaluator reports unsupported entries as unknown. Manual review can establish that a training target satisfies them, but does not make the automatic evaluator support them. Likewise, prose about allowed alternative shapes does not configure the current reference comparator. Keep these limits in review notes.
+Review the target against its instruction, source givens and required notation before marking it ready. Compilation and target-versus-itself scores do not establish source fidelity. Record independent evidence for requirements outside the implemented checks.
 
 ## 5. JSONL records and output paths
 
@@ -177,7 +136,6 @@ Each row has these fields. Required nullable fields stay present as `null`; omit
 | `diagram_types` | Nonempty array of applicable geometry codes `G01`–`G17` from [the taxonomy](../docs/diagram-k12-vn.md), checked against the actual configuration. |
 | `source_group` | ID linking this record to its original problem family. |
 | `split` | `null` until assigned; then `train`, `validation` or `test`. A source group has exactly one assignment across all batches. Do not invent split proportions. |
-| `evaluation_rubric` | Array of entries defined in section 4. Never included in drawing-worker input. |
 
 Keep a source-decision log in `dataset/<batch-id>/selection.jsonl`, with `{source_group, source_path, source_sha256, locator, decision, reason}`. `decision` is `selected`, `skipped` or `needs_review`; an unassigned source group may be `null`. This log is an audit artifact, never a training file. Record a specific reason such as basic recognition, incomplete givens, duplicate source or conflicting evidence.
 

@@ -3,8 +3,7 @@
 Ngày kiểm tra: **2026-09-28**. Bộ chọn hiện tại: **26 công trình** = 10 PDF người dùng cung cấp + 16 nguồn bổ sung. Không phải số toàn bộ search hits hay số paper độc lập đã replication.
 
 - [Related-work synthesis](../tikz-related-work.md): methods, evidence, giới hạn, transfer.
-- [Research protocol](../tikz-research-protocol.md): hypotheses, controls, metrics, gates.
-- [Working plan](../tikz-improvement-plan.md): tích hợp vào công việc đang có.
+- [Evaluation methodology](../evaluation.md): implemented metrics and scope.
 
 ## 1. Phương pháp tìm kiếm và mức độ bằng chứng
 
