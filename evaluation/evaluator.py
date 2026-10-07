@@ -1,111 +1,64 @@
-"""Score compilation, executable givens, drawn content and label readability."""
+"""Two TikZ strings in, four deterministic metric scores out."""
 from __future__ import annotations
 
-import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
-from evaluation.tikz_coverage import carrier_scene, compare_content, content_contract
-from evaluation.tikz_geometry import evaluate_checks
-from evaluation.tikz_observations import read_scene
+import httpx
+
+from evaluation.tikz_coverage import carrier_scene, compare_content, connections
+from evaluation.tikz_geometry import compare_geometry
+from evaluation.tikz_observations import compile_observe, read_scene
 from evaluation.tikz_readability import inspect_readability
 
-VERSION = "tikz-evaluation:v11"
+
+def _percent(checks: list[bool]) -> float:
+    return 100.0 * sum(checks) / len(checks) if checks else 0.0
 
 
-def _count(states: list[str]) -> dict[str, int]:
-    return {"passed": sum(s in {"pass", "match"} for s in states),
-            "failed": sum(s in {"fail", "different"} for s in states),
-            "unresolved": sum(s == "unknown" for s in states), "total": len(states)}
+def _score_observations(target: dict[str, Any], output: dict[str, Any]) -> dict[str, float | int]:
+    """Internal boundary for scoring the same verified compiler observations in tests."""
+    for role, observation in (('target', target), ('output', output)):
+        if not observation.get('compile_success') and observation.get('compile', {}).get('outcome') in (None, 'unknown'):
+            raise RuntimeError(f"{role} compiler unavailable: {observation.get('compile', {}).get('diagnostic', 'no result')}")
+        discovery = observation.get('metadata', {}).get('discovery', {})
+        if discovery.get('status') == 'request_error':
+            raise RuntimeError(f"{role} geometry probe unavailable: {discovery.get('error', 'no result')}")
+    if not target.get('compile_success'):
+        raise ValueError('target_tikz does not compile')
+    reference = read_scene(target)
+    if reference['unsupported'] or reference['unresolved']:
+        raise ValueError(f"Unusable reference geometry: {reference['unsupported'] or reference['unresolved']}")
+    if not output.get('compile_success'):
+        return {'compile': 0, 'mathematical_correctness': 0.0, 'content_coverage': 0.0, 'visual_readability': 0.0}
+    produced = read_scene(output)
+    mathematics, circle_matches = compare_geometry(reference, produced)
+    content = compare_content(reference, produced, circle_matches)
+    readability = inspect_readability(carrier_scene(produced, connections(reference)))
+    return {'compile': 1, 'mathematical_correctness': _percent(mathematics), 'content_coverage': _percent(content),
+            'visual_readability': _percent([label['status'] == 'pass' for label in readability['labels']])
+            if readability['labels'] else 100.0}
 
 
-def _percent(counts: dict[str, int]) -> float | None:
-    return 100 * counts["passed"] / counts["total"] if counts["total"] else None
+@contextmanager
+def _observe_pair(target_tikz: str, output_tikz: str) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Keep compiled artifacts alive while scoring or building a preview."""
+    if not isinstance(target_tikz, str) or not isinstance(output_tikz, str):
+        raise TypeError('target_tikz and output_tikz must be strings')
+    with TemporaryDirectory(prefix='tikz-evaluation-') as directory, httpx.Client(
+        base_url=os.environ.get('COMPILER_URL', 'http://127.0.0.1:18080'), timeout=200, trust_env=False,
+    ) as compiler:
+        root = Path(directory)
+        target = compile_observe(target_tikz, root / 'target', compiler)
+        output = target if output_tikz == target_tikz else compile_observe(output_tikz, root / 'output', compiler)
+        yield target, output
 
 
-def _givens(rubric: list[dict[str, Any]], geometry_space: str) -> list[dict[str, Any]]:
-    """Flatten existing dataset criteria; grouping and duplicate checks carry no weight."""
-    if not isinstance(rubric, list):
-        raise TypeError("evaluation_rubric must be a list")
-    checks, ids, seen = [], set(), set()
-    for criterion in rubric:
-        if (not isinstance(criterion, dict) or not isinstance(criterion.get("id"), str)
-                or not criterion["id"] or criterion["id"] in ids):
-            raise ValueError("Rubric criteria require unique IDs")
-        if criterion.get("dimension") != "mathematical_correctness":
-            raise ValueError("Only mathematical givens belong in evaluation_rubric; other metrics use shared checks")
-        ids.add(criterion["id"])
-        if not isinstance(criterion.get("checks", []), list):
-            raise TypeError("Criterion checks must be a list")
-        for check in criterion.get("checks") or [{"op": "unspecified", "criterion": criterion["id"]}]:
-            if not isinstance(check, dict):
-                raise TypeError("Each given must be a check object")
-            check = {"geometry_space": criterion.get("geometry_space", geometry_space), **check}
-            key = json.dumps(check, sort_keys=True, allow_nan=False)
-            if key not in seen:
-                seen.add(key)
-                checks.append(check)
-    return checks
-
-
-def evaluate(
-    target: dict[str, Any], output: dict[str, Any], *,
-    evaluation_rubric: list[dict[str, Any]] | None = None,
-    geometry_space: str = "euclidean_2d",
-    content_requirements: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Percentages award credit only for verified units, keeping unresolved units in the denominator."""
-    givens = _givens(evaluation_rubric if evaluation_rubric is not None else [], geometry_space)
-    scenes, errors, mathematics = {}, [], {}
-    for role, observation in (("target", target), ("output", output)):
-        if observation.get("compile_success"):
-            try:
-                scenes[role] = read_scene(observation)
-            except (OSError, ValueError, RuntimeError) as error:
-                errors.append(f"{role}: {error}")
-        points = {
-            label: {"status": "measured", "x": point["pdf_x"], "y": point["pdf_y"], "unit": "pdf_pt",
-                    "frame": "original_pdf", "evidence_id": point.get("evidence_id"),
-                    "coordinate_error_bound": point.get("pdf_coordinate_error_bound_pt", 0.0)}
-            for label, point in scenes.get(role, {}).get("bindings", {}).items() if point.get("status") == "measured"
-        }
-        mathematics[role] = evaluate_checks(givens, points, geometry_space=geometry_space)
-    content, readability, coverage_states = {}, {}, []
-    if "output" in scenes and ("target" in scenes or content_requirements is not None):
-        content = compare_content(scenes.get("target", {"points": {}, "strokes": []}), scenes["output"],
-                                  content_requirements=content_requirements, geometry_space=geometry_space)
-        point_checks = content["checks"]["points"]
-        for name in point_checks["required"]:
-            coverage_states.append("different" if name in point_checks["missing"] else
-                                   "unknown" if name in point_checks["unresolved"] else "match")
-        coverage_states += [row["status"] for row in content["checks"]["connections"]["requirements"]]
-        circle_output = content["checks"]["circles"]
-        coverage_states += [row["status"] for row in circle_output["requirements"]]
-        extra_count = len(point_checks["extra"]) + len(content["checks"]["connections"]["extra_connections"])
-        extra_count += max(0, circle_output.get("observed_count", 0) - circle_output.get("required_count", 0))
-        coverage_states += ["different"] * extra_count
-        # Unsupported emitted objects cannot disappear from a perfect coverage score.
-        coverage_states += ["unknown"] * len(content["limitations"])
-        for role, circles in (("target", content.pop("target_circles")), ("output", circle_output)):
-            mathematics[role] += [
-                {"check": row["requirement"], "status": {"match": "pass", "different": "fail"}.get(row["mathematical_status"], "unknown"),
-                 "residual": row["residual"], "tolerance": row["tolerance"], **({"reason": row["reason"]} if row.get("reason") else {})}
-                for row in circles["requirements"]
-            ]
-    if "output" in scenes:
-        scene = scenes["output"]
-        readability = inspect_readability(carrier_scene(scene, content.get("contract") or content_contract(scene)))
-    counts = {
-        "mathematical_correctness": _count([row["status"] for row in mathematics["output"]]),
-        "content_coverage": _count(coverage_states),
-        "visual_readability": _count([row["status"] for row in readability.get("labels", [])]),
-    }
-    outcome = output.get("compile", {}).get("outcome")
-    compile_score = 1 if output.get("compile_success") else 0 if outcome not in (None, "unknown") else None
-    scores = {"compile": compile_score, **{name: _percent(value) for name, value in counts.items()}}
-    if "output" in scenes and not scenes["output"]["text"]:
-        scores["visual_readability"] = 100.0
-    return {"version": VERSION, "scores": scores, "counts": counts,
-            "checks": {"mathematical_correctness": mathematics, "content_coverage": content, "visual_readability": readability},
-            "source_hashes": {role: observation.get("metadata", {}).get("input_tikz_sha256")
-                              for role, observation in (("target", target), ("output", output))},
-            "errors": errors}
+def evaluate(target_tikz: str, output_tikz: str) -> dict[str, float | int]:
+    """Compare observed reference geometry; compile is 0/1, other scores are 0-100."""
+    with _observe_pair(target_tikz, output_tikz) as (target, output):
+        return _score_observations(target, output)

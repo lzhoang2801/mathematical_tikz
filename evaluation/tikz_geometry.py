@@ -1,32 +1,19 @@
-"""Evaluate frozen mathematical relations on measured point coordinates."""
-
+"""Measure rendered geometry and compare observable construction relations."""
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from numbers import Real
+from functools import lru_cache
+from itertools import combinations
 from typing import Any
 
 import numpy as np
 from shapely.geometry import LineString, Point
 
+from evaluation.tikz_coverage import connections
+
 REL_TOL = 0.005
-ANGLE_TOL = math.sin(math.radians(1))
-_PREDICATE_ARITY = {
-    "perpendicular": 4, "parallel": 4, "equal_length": 4, "length_ratio": 4,
-    "shorter": 4, "midpoint": 3, "on_circle": 3, "outside_circle": 3,
-    "collinear": 3, "between": 3, "same_ray": 3, "minor_arc": 4,
-    "tangent": 4, "tangent_circumcircle": 5, "concyclic": 4, "distinct": 2,
-    "equal_vector": 4, "directed_ratio": 3, "noncollinear": 3,
-    "orientation_sign": 3,
-}
-_GEOMETRY_SPACES = {"euclidean_2d", "affine_projection"}
-_AFFINE_PROJECTION_OPS = {
-    "collinear", "parallel", "midpoint", "between", "same_ray", "distinct",
-    "affine_combination", "equal_vector", "directed_ratio", "noncollinear",
-    "orientation_sign",
-}
-_AREA_TOL = 1e-12
+
 
 def _curve(points: list[tuple[float, float]], tolerance: float = 0.08, depth: int = 0) -> list[tuple[float, float]]:
     a, b, c, d = np.asarray(points, dtype=float)
@@ -99,359 +86,192 @@ def measure_circle(part: Sequence[tuple[float, float]]) -> dict[str, Any] | None
             "radial_residual": residual, "unit": "pdf_pt", "frame": "original_pdf"}
 
 
-def _point(point_map: Mapping[str, Any], label: str) -> tuple[float, float, str, str]:
-    point = point_map.get(label)
-    if not isinstance(point, Mapping) or point.get("status") != "measured":
-        raise ValueError(f"Point {label!r} has no resolved coordinate measurement")
-    x, y = point.get("x"), point.get("y")
-    if isinstance(x, bool) or isinstance(y, bool) or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-        raise TypeError(f"Point {label!r} has invalid coordinates")
-    try:
-        x, y = float(x), float(y)
-    except OverflowError as error:
-        raise ValueError(f"Point {label!r} has unrepresentable coordinates") from error
-    if not math.isfinite(x) or not math.isfinite(y):
-        raise ValueError(f"Point {label!r} has non-finite coordinates")
-    unit, frame = point.get("unit"), point.get("frame")
-    if not isinstance(unit, str) or not isinstance(frame, str):
-        raise TypeError(f"Point {label!r} lacks its unit or coordinate frame")
-    return float(x), float(y), unit, frame
+def _assign_circles(errors: list[list[float]], target: list[dict], output: list[dict]) -> tuple:
+    """Match distinct circles, preferring geometry, then dash style, then residual."""
+    size = max(len(target), len(output))
+
+    @lru_cache(maxsize=None)
+    def assign(i: int, used: int) -> tuple:
+        if i == len(target):
+            return 0, 0, 0.0, ()
+        candidates = []
+        for j in range(size):
+            if used & (1 << j):
+                continue
+            failures, style, residual, tail = assign(i + 1, used | (1 << j))
+            error = errors[i][j] if j < len(output) else math.inf
+            wrong_style = j >= len(output) or target[i]['dashed'] != output[j]['dashed']
+            candidates.append((failures + int(error > REL_TOL), style + int(wrong_style),
+                               residual + error, (j,) + tail))
+        return min(candidates)
+
+    return assign(0, 0)
 
 
-def _normalize_coordinates(
-    coordinates: Sequence[tuple[float, float]],
-) -> tuple[list[tuple[float, float]], float]:
-    """Use a local unit-diameter frame; page translation and scale are immaterial."""
-    if not coordinates:
-        return [], 0.0
-    ox, oy = coordinates[0]
-    translated = [(x - ox, y - oy) for x, y in coordinates]
-    if not all(math.isfinite(value) for point in translated for value in point):
-        # Subtraction can overflow for opposite finite extremes; rescale first.
-        magnitude = max(abs(value) for point in coordinates for value in point)
-        scaled = [(x / magnitude, y / magnitude) for x, y in coordinates]
-        ox, oy = scaled[0]
-        translated = [(x - ox, y - oy) for x, y in scaled]
-    magnitude = max(abs(value) for point in translated for value in point)
-    if magnitude == 0:
-        return [(0.0, 0.0) for _ in coordinates], 0.0
-    normalized = [(x / magnitude, y / magnitude) for x, y in translated]
-    diameter = max(math.dist(a, b) for a in normalized for b in normalized)
-    return [(x / diameter, y / diameter) for x, y in normalized], diameter
+
+def _line_position(a: np.ndarray, b: np.ndarray, p: np.ndarray) -> tuple[float, float]:
+    vector, offset = b - a, p - a
+    squared = float(vector @ vector)
+    if squared == 0:
+        return math.inf, math.inf
+    return float(offset @ vector / squared), abs(float(vector[0] * offset[1] - vector[1] * offset[0])) / squared
 
 
-def _normalized_configuration(
-    point_map: Mapping[str, Any], unit: str, frame: str
-) -> dict[str, tuple[float, float]] | None:
-    """Return measured points in one common, unit-diameter frame."""
-    coordinates: dict[str, tuple[float, float]] = {}
-    for label in point_map:
-        try:
-            x, y, point_unit, point_frame = _point(point_map, label)
-        except (TypeError, ValueError):
+def _right_angles(scene: dict[str, Any], edges: list[dict]) -> set[tuple[str, str, str]]:
+    """Bind a small square corner marker to its vertex and two painted named rays."""
+    points = {name: np.asarray(p) for name, p in scene['points'].items()}
+    junctions = {}
+    for stroke in scene.get('strokes', []):
+        for part in stroke.get('components', [stroke['geometry']]):
+            if part.geom_type == 'LineString' and len(part.coords) == 2:
+                a, b = map(tuple, part.coords)
+                if a != b:
+                    junctions.setdefault(a, set()).add(b)
+                    junctions.setdefault(b, set()).add(a)
+    angles = set()
+    for corner, endpoints in junctions.items():
+        corner = np.asarray(corner)
+        for first, second in combinations(sorted(endpoints), 2):
+            a, b = np.asarray(first), np.asarray(second)
+            u, v = a - corner, b - corner
+            size = max(np.linalg.norm(u), np.linalg.norm(v))
+            if abs(float(u @ v)) > REL_TOL * np.linalg.norm(u) * np.linalg.norm(v):
+                continue
+            vertex = a + b - corner
+            for name, p in points.items():
+                if np.linalg.norm(vertex - p) > size * REL_TOL:
+                    continue
+                rays = []
+                for endpoint in (a, b):
+                    candidates = []
+                    for edge in edges:
+                        for other in edge['points']:
+                            if other == name:
+                                continue
+                            q = points[other]
+                            t, error = _line_position(p, q, endpoint)
+                            e0, e1 = (points[label] for label in edge['points'])
+                            base_t, base_error = _line_position(e0, e1, p)
+                            if error <= REL_TOL and 0 < t < 0.5 and base_error <= REL_TOL and -REL_TOL <= base_t <= 1 + REL_TOL:
+                                candidates.append((np.linalg.norm(q - p), other))
+                    if candidates:
+                        rays.append(max(candidates)[1])
+                if len(rays) == 2 and rays[0] != rays[1]:
+                    left, right = sorted(rays)
+                    angles.add((left, name, right))
+    return angles
+
+
+def _circle_error(reference: dict, drawn: dict, points: dict, produced: dict, edges: list[dict]) -> float:
+    """Compare a circle's relations, allowing its radius to follow changed free points."""
+    center, other = np.asarray(reference['center']), np.asarray(drawn['center'])
+    radius, actual_radius = reference['radius'], drawn['radius']
+    errors = []
+    for name, p in points.items():
+        distance = np.linalg.norm(p - center) / radius
+        if distance <= REL_TOL or abs(distance - 1) <= REL_TOL:
+            actual = np.linalg.norm(produced[name] - other) / actual_radius if name in produced else math.inf
+            errors.append(float(actual if distance <= REL_TOL else abs(actual - 1)))
+    for a, b in combinations(points, 2):
+        if abs(np.linalg.norm(points[b] - points[a]) / radius - 1) <= REL_TOL:
+            errors.append(abs(np.linalg.norm(produced[b] - produced[a]) / actual_radius - 1)
+                          if a in produced and b in produced else math.inf)
+    for edge in edges:
+        a, b = edge['points']
+        _, error = _line_position(points[a], points[b], center)
+        if abs(error * np.linalg.norm(points[b] - points[a]) / radius - 1) <= REL_TOL:
+            if a not in produced or b not in produced:
+                errors.append(math.inf)
+            else:
+                _, actual = _line_position(produced[a], produced[b], other)
+                errors.append(abs(actual * np.linalg.norm(produced[b] - produced[a]) / actual_radius - 1)
+                              if math.isfinite(actual) else math.inf)
+    if not errors and points:
+        raise ValueError('Reference circle has no named center, boundary point, radius segment or tangent')
+    return float(max(errors, default=0.0))
+
+
+def compare_geometry(target: dict[str, Any], output: dict[str, Any]) -> tuple[list[bool], list[int | None]]:
+    """One vote per observed relation; all requirements come from the target alone."""
+    points = {name: np.asarray(p, dtype=float) for name, p in target['points'].items()}
+    produced = {name: np.asarray(p, dtype=float) for name, p in output['points'].items() if p is not None and name in points}
+    pairs = list(combinations(sorted(points), 2))
+    extent = max((np.linalg.norm(points[b] - points[a]) for a, b in pairs), default=0.0)
+    actual_extent = max((np.linalg.norm(produced[b] - produced[a]) for a, b in pairs if a in produced and b in produced), default=0.0)
+    checks = []
+    for a, b in pairs:
+        coincident = np.linalg.norm(points[b] - points[a]) <= extent * 1e-8
+        checks.append(a in produced and b in produced and
+                      (np.linalg.norm(produced[b] - produced[a]) <= actual_extent * 1e-8) == coincident)
+
+    nondegenerate = []
+    for names in combinations(points, 3):
+        a, b = max(combinations(names, 2), key=lambda pair: np.linalg.norm(points[pair[1]] - points[pair[0]]))
+        c = next(name for name in names if name not in (a, b))
+        if np.linalg.norm(points[b] - points[a]) <= extent * 1e-8:
             continue
-        if point_unit == unit and point_frame == frame:
-            coordinates[label] = (x, y)
-    if len(coordinates) < 2:
-        return None
-    labels = list(coordinates)
-    normalized, extent = _normalize_coordinates(list(coordinates.values()))
-    if extent == 0:
-        return None
-    return dict(zip(labels, normalized))
-
-
-def _check_geometry(
-    check: dict[str, Any],
-    point_map: Mapping[str, Any],
-    *,
-    geometry_space: str = "euclidean_2d",
-) -> dict[str, Any]:
-    operation = check.get("op")
-    labels = check.get("points")
-    if not isinstance(operation, str) or not isinstance(labels, list):
-        return {"status": "unknown", "reason": "invalid_check"}
-    if operation != "affine_combination" and operation not in _PREDICATE_ARITY:
-        return {"status": "unknown", "reason": "unsupported_check"}
-    if operation == "affine_combination":
-        if len(labels) < 2:
-            return {"status": "unknown", "reason": "wrong_point_arity"}
-    elif len(labels) != _PREDICATE_ARITY[operation]:
-        return {"status": "unknown", "reason": "wrong_point_arity"}
-    if geometry_space not in _GEOMETRY_SPACES:
-        return {"status": "unknown", "reason": "unsupported_geometry_space"}
-    if geometry_space == "affine_projection" and operation not in _AFFINE_PROJECTION_OPS:
-        return {"status": "unknown", "reason": "unsupported_predicate_in_geometry_space"}
-    if not isinstance(point_map, Mapping):
-        return {"status": "unknown", "reason": "point_measurements_unavailable"}
-    weights = None
-    if operation == "affine_combination":
-        raw_weights = check.get("weights")
-        if (
-            not isinstance(raw_weights, list)
-            or len(raw_weights) != len(labels) - 1
-            or any(isinstance(weight, bool) or not isinstance(weight, Real) for weight in raw_weights)
-        ):
-            return {"status": "unknown", "reason": "invalid_affine_weights"}
-        try:
-            weights = [float(weight) for weight in raw_weights]
-            weight_sum = math.fsum(weights)
-        except (OverflowError, ValueError):
-            return {"status": "unknown", "reason": "invalid_affine_weights"}
-        if not all(math.isfinite(weight) for weight in weights) or not math.isfinite(weight_sum):
-            return {"status": "unknown", "reason": "invalid_affine_weights"}
-        if not math.isclose(weight_sum, 1.0, rel_tol=1e-12, abs_tol=1e-12):
-            return {"status": "unknown", "reason": "affine_weights_must_sum_to_one"}
-        # Absorb harmless serialization error while retaining translation invariance.
-        if len(weights) == 1:
-            weights[0] = 1.0
+        t, error = _line_position(points[a], points[b], points[c])
+        complete = all(name in produced for name in names)
+        actual_t, actual_error = _line_position(produced[a], produced[b], produced[c]) if complete else (math.inf, math.inf)
+        if error <= REL_TOL:
+            # A midpoint is a relation; a generic foot's division ratio is not fixed.
+            midpoint = abs(t - 0.5) <= REL_TOL
+            checks.append(complete and actual_error <= REL_TOL and (not midpoint or abs(actual_t - 0.5) <= REL_TOL))
         else:
-            weights = [weight / weight_sum for weight in weights]
-            weights[-1] = 1.0 - math.fsum(weights[:-1])
-    try:
-        points = [_point(point_map, label) for label in labels]
-    except (TypeError, ValueError) as error:
-        return {"status": "unknown", "reason": str(error)}
-    units = {point[2] for point in points}
-    frames = {point[3] for point in points}
-    if len(units) != 1 or len(frames) != 1:
-        return {"status": "unknown", "reason": "incompatible_point_frames_or_units"}
-    p = [(point[0], point[1]) for point in points]
+            nondegenerate.append(complete and math.isfinite(actual_error) and actual_error > 1e-6)
+    if nondegenerate:
+        checks.append(all(nondegenerate))
 
-    def sub(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
-        return a[0] - b[0], a[1] - b[1]
+    edges = connections(target) if target.get('strokes') else []
+    for edge in edges:
+        a, b = edge['points']
+        for name in points.keys() - {a, b}:
+            t, error = _line_position(points[a], points[b], points[name])
+            if error <= REL_TOL and 0 < t < 1:
+                actual_t, actual_error = (_line_position(produced[a], produced[b], produced[name])
+                                          if all(p in produced for p in (a, b, name)) else (math.inf, math.inf))
+                checks.append(actual_error <= REL_TOL and -REL_TOL <= actual_t <= 1 + REL_TOL)
+    for first, second in combinations(edges, 2):
+        a, b = first['points']
+        c, d = second['points']
+        u, v = points[b] - points[a], points[d] - points[c]
+        lengths = np.linalg.norm(u), np.linalg.norm(v)
+        cross = abs(float(u[0] * v[1] - u[1] * v[0])) / (lengths[0] * lengths[1])
+        if cross <= REL_TOL and _line_position(points[a], points[b], points[c])[1] > REL_TOL:
+            if not all(name in produced for name in (a, b, c, d)):
+                checks.append(False)
+                continue
+            actual_u, actual_v = produced[b] - produced[a], produced[d] - produced[c]
+            actual_lengths = np.linalg.norm(actual_u), np.linalg.norm(actual_v)
+            valid = min(actual_lengths) > 0
+            if valid:
+                valid = abs(float(actual_u[0] * actual_v[1] - actual_u[1] * actual_v[0])) <= REL_TOL * actual_lengths[0] * actual_lengths[1]
+                if abs(lengths[0] / lengths[1] - 1) <= REL_TOL:
+                    sign = 1 if float(u @ v) > 0 else -1
+                    valid = valid and np.linalg.norm(actual_u - sign * actual_v) <= REL_TOL * max(actual_lengths)
+            checks.append(bool(valid))
+    for a, vertex, b in sorted(_right_angles(target, edges)):
+        if not all(name in produced for name in (a, vertex, b)):
+            checks.append(False)
+            continue
+        u, v = produced[a] - produced[vertex], produced[b] - produced[vertex]
+        product = np.linalg.norm(u) * np.linalg.norm(v)
+        checks.append(product > 0 and abs(float(u @ v)) <= REL_TOL * product)
 
-    def dot(a: tuple[float, float], b: tuple[float, float]) -> float:
-        return a[0] * b[0] + a[1] * b[1]
-
-    def cross(a: tuple[float, float], b: tuple[float, float]) -> float:
-        return a[0] * b[1] - a[1] * b[0]
-
-    def norm(a: tuple[float, float]) -> float:
-        return math.hypot(a[0], a[1])
-
-    def dist(a: tuple[float, float], b: tuple[float, float]) -> float:
-        return norm(sub(a, b))
-
-    if operation == "distinct":
-        configuration = _normalized_configuration(
-            point_map, next(iter(units)), next(iter(frames))
-        )
-        if configuration is None:
-            return {"status": "unknown", "reason": "configuration_scale_unavailable"}
-        p = [configuration[label] for label in labels]
-    else:
-        p, extent = _normalize_coordinates(p)
-        if extent == 0 and operation not in {"affine_combination", "equal_vector", "midpoint"}:
-            return {"status": "fail", "reason": "degenerate_configuration", "residual": 1.0}
-    scale = 1.0
-    raw_value = check.get("value", 1.0)
-    if isinstance(raw_value, bool) or not isinstance(raw_value, Real):
-        return {"status": "unknown", "reason": "invalid_check_value"}
-    try:
-        value = float(raw_value)
-    except (OverflowError, ValueError):
-        return {"status": "unknown", "reason": "invalid_check_value"}
-    if not math.isfinite(value):
-        return {"status": "unknown", "reason": "invalid_check_value"}
-    if operation == "orientation_sign" and value not in (-1.0, 1.0):
-        return {"status": "unknown", "reason": "orientation_sign_value_must_be_plus_or_minus_one"}
-
-    threshold = REL_TOL
-    conditions = {}
-    try:
-        if operation == "distinct":
-            separation_ratio = dist(p[0], p[1]) / scale
-            conditions = {"separation_ratio": separation_ratio, "min_ratio_exclusive": 1e-5}
-            passed = separation_ratio > conditions["min_ratio_exclusive"]
-            residual, threshold = None, None
-        elif operation == "affine_combination":
-            expected = (
-                math.fsum(weight * point[0] for weight, point in zip(weights, p[1:])),
-                math.fsum(weight * point[1] for weight, point in zip(weights, p[1:])),
-            )
-            residual = dist(p[0], expected) / scale
-            conditions = {"weights": weights, "weight_sum": math.fsum(weights)}
-            passed = residual <= threshold
-        elif operation == "equal_vector":
-            first_vector, second_vector = sub(p[1], p[0]), sub(p[3], p[2])
-            vector_scale = max(norm(first_vector), norm(second_vector))
-            residual = norm(sub(first_vector, second_vector)) / vector_scale if vector_scale else 0.0
-            passed = residual <= threshold
-        elif operation == "directed_ratio":
-            offset, direction = sub(p[0], p[1]), sub(p[2], p[1])
-            direction_norm = norm(direction)
-            if direction_norm < scale * 1e-6:
-                raise ValueError("zero_length_segment")
-            observed_ratio = dot(offset, direction) / dot(direction, direction)
-            line_residual = abs(cross(offset, direction)) / dot(direction, direction)
-            ratio_residual = abs(observed_ratio - value)
-            residual = max(line_residual, ratio_residual)
-            conditions = {
-                "observed_ratio": observed_ratio,
-                "requested_ratio": value,
-                "line_residual_ratio": line_residual,
-            }
-            passed = line_residual <= threshold and ratio_residual <= threshold
-        elif operation in {"noncollinear", "orientation_sign"}:
-            signed_area = cross(sub(p[1], p[0]), sub(p[2], p[0]))
-            area = abs(signed_area)
-            conditions = {
-                "signed_area_ratio": signed_area,
-                "min_abs_area_ratio_exclusive": _AREA_TOL,
-            }
-            if operation == "noncollinear":
-                residual = area
-                threshold = _AREA_TOL
-                passed = area > threshold
-            else:
-                if area <= _AREA_TOL:
-                    return {"status": "unknown", "reason": "orientation_undefined_or_nearly_collinear"}
-                conditions["expected_sign"] = value
-                residual = area
-                threshold = _AREA_TOL
-                passed = (1.0 if signed_area > 0 else -1.0) == value
-        elif operation in {"perpendicular", "parallel", "equal_length", "length_ratio", "shorter"}:
-            a, b = sub(p[1], p[0]), sub(p[3], p[2])
-            da, db = norm(a), norm(b)
-            if min(da, db) < scale * 1e-6:
-                raise ValueError("zero_length_segment")
-            if operation in {"perpendicular", "parallel"}:
-                residual = abs((dot if operation == "perpendicular" else cross)(a, b)) / (da * db)
-                threshold = ANGLE_TOL
-                passed = residual <= threshold
-            elif operation == "shorter":
-                conditions = {"length_ratio": da / db, "max_ratio_exclusive": 1 - 1e-5}
-                passed = conditions["length_ratio"] < conditions["max_ratio_exclusive"]
-                residual, threshold = None, None
-            else:
-                target = value if operation == "length_ratio" else 1.0
-                residual = abs(da / db - target)
-                threshold = REL_TOL * abs(target)
-                passed = residual <= threshold
-        elif operation == "midpoint":
-            midpoint = ((p[1][0] + p[2][0]) / 2, (p[1][1] + p[2][1]) / 2)
-            residual = dist(p[0], midpoint) / scale
-            passed = residual <= threshold
-        elif operation in {"on_circle", "outside_circle"}:
-            radius = dist(p[1], p[2])
-            if radius < scale * 1e-6:
-                raise ValueError("zero_radius")
-            ratio = dist(p[0], p[1]) / radius
-            if operation == "on_circle":
-                residual = abs(ratio - 1)
-                passed = residual <= threshold
-            else:
-                conditions = {"radius_ratio": ratio, "min_ratio_exclusive": 1 + 1e-5}
-                passed = ratio > conditions["min_ratio_exclusive"]
-                residual, threshold = None, None
-        elif operation in {"collinear", "between", "same_ray"}:
-            a, b = (
-                (sub(p[1], p[0]), sub(p[2], p[0]))
-                if operation == "collinear"
-                else (sub(p[0], p[1]), sub(p[2], p[1]))
-            )
-            if min(norm(a), norm(b)) < scale * 1e-6:
-                raise ValueError("undefined_line")
-            residual = abs(cross(a, b)) / (norm(b) * scale)
-            parameter = dot(a, b) / dot(b, b)
-            if operation != "collinear":
-                conditions = {"line_parameter": parameter, "min_parameter_exclusive": 1e-5,
-                              "max_parameter_exclusive": 1 - 1e-5 if operation == "between" else None}
-            passed = residual <= threshold and (
-                operation == "collinear"
-                or (1e-5 < parameter < 1 - 1e-5 if operation == "between" else parameter > 1e-5)
-            )
-        elif operation == "minor_arc":
-            point, center, start, end = p
-            radius = dist(center, start)
-            if radius < scale * 1e-6:
-                raise ValueError("zero_radius")
-            angles = [math.atan2(x[1] - center[1], x[0] - center[0]) for x in (point, start, end)]
-
-            def wrap(angle: float) -> float:
-                return (angle + math.pi) % (2 * math.pi) - math.pi
-
-            whole = wrap(angles[2] - angles[1])
-            if abs(abs(whole) - math.pi) < 1e-5 or abs(whole) < 1e-5:
-                raise ValueError("minor_arc_undefined")
-            part = wrap(angles[0] - angles[1])
-            residual = max(abs(dist(point, center) / radius - 1), abs(dist(end, center) / radius - 1))
-            conditions = {"point_sweep_radians": part, "arc_sweep_radians": whole,
-                          "same_direction": part * whole > 0, "inside_open_arc": abs(part) < abs(whole) - 1e-5}
-            passed = residual <= threshold and conditions["same_direction"] and conditions["inside_open_arc"]
-        elif operation in {"tangent", "tangent_circumcircle"}:
-            if operation == "tangent":
-                center, witness, a, b = p
-                radius = dist(center, witness)
-            else:
-                a, b, c, d, e = p
-                dx, dy = sub(d, c)
-                ex, ey = sub(e, c)
-                determinant = 2 * (dx * ey - dy * ex)
-                if abs(determinant) < scale * scale * 1e-6:
-                    raise ValueError("collinear_circumcircle_witnesses")
-                ux = ((dx * dx + dy * dy) * ey - (ex * ex + ey * ey) * dy) / determinant
-                uy = (dx * (ex * ex + ey * ey) - ex * (dx * dx + dy * dy)) / determinant
-                center = c[0] + ux, c[1] + uy
-                radius = dist(center, c)
-            direction = sub(b, a)
-            if min(radius, norm(direction)) < scale * 1e-6:
-                raise ValueError("undefined_tangent_line_or_circle")
-            residual = abs(abs(cross(direction, sub(center, a))) / (norm(direction) * radius) - 1)
-            passed = residual <= threshold
-        elif operation == "concyclic":
-            a, b, c, d = p
-            bx, by = sub(b, a)
-            cx, cy = sub(c, a)
-            determinant = 2 * (bx * cy - by * cx)
-            if abs(determinant) < scale * scale * 1e-6:
-                raise ValueError("collinear_circle_witnesses")
-            ux = ((bx * bx + by * by) * cy - (cx * cx + cy * cy) * by) / determinant
-            uy = (bx * (cx * cx + cy * cy) - cx * (bx * bx + by * by)) / determinant
-            center = a[0] + ux, a[1] + uy
-            residual = abs(dist(center, d) / dist(center, a) - 1)
-            conditions = {"minimum_point_distance": min(dist(x, y) for index, x in enumerate(p) for y in p[index + 1 :]),
-                          "min_distance_exclusive": scale * 1e-5}
-            passed = residual <= threshold and conditions["minimum_point_distance"] > conditions["min_distance_exclusive"]
-    except (OverflowError, ZeroDivisionError, ValueError) as error:
-        return {"status": "unknown", "reason": str(error)}
-
-    return {
-        "status": "pass" if passed else "fail",
-        "residual": residual,
-        "tolerance": threshold,
-        "conditions": conditions,
-        "unit": next(iter(units)),
-        "frame": next(iter(frames)),
-        "evidence_ids": [point_map[label].get("evidence_id") for label in labels],
-    }
-
-
-def evaluate_checks(
-    checks: list[dict[str, Any]],
-    points: Mapping[str, Any],
-    *,
-    geometry_space: str = "euclidean_2d",
-) -> list[dict[str, Any]]:
-    """Evaluate fixed 2D predicates in Euclidean or affine-projection space."""
-    if not isinstance(checks, list):
-        raise TypeError("checks must be a list")
-    if not isinstance(points, Mapping):
-        raise TypeError("points must be a mapping")
-    results = []
-    for check in checks:
-        if not isinstance(check, dict):
-            result = {"status": "unknown", "reason": "invalid_check"}
-            selected_space = geometry_space
-        else:
-            selected_space = check.get("geometry_space", geometry_space)
-            if not isinstance(selected_space, str) or not selected_space:
-                result = {"status": "unknown", "reason": "invalid_geometry_space"}
-            elif selected_space not in _GEOMETRY_SPACES:
-                result = {"status": "unknown", "reason": "unsupported_geometry_space"}
-            else:
-                result = _check_geometry(check, points, geometry_space=selected_space)
-        result["geometry_space"] = selected_space
-        results.append({"check": check, **result})
-    return results
+    circles, drawn = target.get('circles', []), output.get('circles', [])
+    if not circles:
+        return [bool(check) for check in checks], []
+    # ponytail: exact circle assignment is bounded to 12; use a polynomial solver if needed.
+    if len(circles) > 12:
+        raise ValueError('Reference exceeds the 12-circle matching limit')
+    if len(circles) > 1 and extent == 0:
+        raise ValueError('Multiple reference circles require two distinct named points')
+    for circle in circles:
+        _circle_error(circle, circle, points, points, edges)
+    if len(drawn) > 12:
+        return [bool(check) for check in checks] + [False] * len(circles), [None] * len(circles)
+    errors = [[_circle_error(circle, item, points, produced, edges) for item in drawn] for circle in circles]
+    indices = _assign_circles(errors, circles, drawn)[-1]
+    matches = [j if j < len(drawn) else None for j in indices]
+    checks += [j is not None and errors[i][j] <= REL_TOL for i, j in enumerate(matches)]
+    return [bool(check) for check in checks], matches

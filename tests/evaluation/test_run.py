@@ -1,92 +1,49 @@
-"""Evaluation reporting preserves missing results, source groups and evidence."""
-import hashlib
+"""The CLI exposes the same two-input evaluator, without case metadata."""
 import json
-from unittest.mock import MagicMock
+from contextlib import contextmanager
 
 import pytest
+from unittest.mock import Mock
 
 from evaluation import run
 
 
-def planned(case_id, group, **extra):
-    return {"id": case_id, "source_group": group, "task": "Generate", "system_id": "test-model", **extra}
+def test_cli_reads_two_tikz_files_and_prints_only_scores(tmp_path, monkeypatch, capsys):
+    target, output = tmp_path / 'target.tex', tmp_path / 'output.tex'
+    target.write_text('target code', encoding='utf-8')
+    output.write_text('output code', encoding='utf-8')
+    scores = {'compile': 1, 'mathematical_correctness': 75.0, 'content_coverage': 100.0, 'visual_readability': 50.0}
+    evaluator = Mock(return_value=scores)
+    monkeypatch.setattr(run, 'evaluate', evaluator)
+    monkeypatch.setattr('sys.argv', ['evaluation.run', '--target', str(target), '--output', str(output)])
+    run.main()
+    evaluator.assert_called_once_with('target code', 'output code')
+    assert json.loads(capsys.readouterr().out) == scores
 
 
-def measured(case_id, value):
-    return {"id": case_id, "comparison": {"scores": {"mathematical_correctness": value}}}
-
-
-def test_missing_results_stay_scheduled_and_augmentation_does_not_change_group_mean():
-    cases = [planned(str(i), "augmented") for i in range(3)] + [planned("bad", "other"), planned("missing", "missing")]
-    results = [measured(str(i), 100) for i in range(3)] + [measured("bad", 0)]
-    summary = run.summarize(cases, results)[0]
-    assert summary["n_scheduled"] == 5 and summary["n_results"] == 4
-    metric = summary["scores"]["mathematical_correctness"]
-    assert metric == {"mean": 75, "source_group_mean": 50, "available": 4, "missing": 1, "unresolved_units": 0}
-    cases.append(planned("more", "augmented"))
-    results.append(measured("more", 100))
-    assert run.summarize(cases, results)[0]["scores"]["mathematical_correctness"]["source_group_mean"] == 50
-    results[0]["comparison"]["counts"] = {"mathematical_correctness": {"unresolved": 2}}
-    assert run.summarize(cases, results)[0]["scores"]["mathematical_correctness"]["unresolved_units"] == 2
-
-
-def test_systems_controls_tasks_and_splits_are_kept_separate():
-    cases = [planned("control", "a", cohort="controls"), planned("model", "b"), planned("edit", "b", task="Edit")]
-    assert len(run.summarize(cases, [measured(case["id"], 100) for case in cases])) == 3
-    with pytest.raises(ValueError, match="multiple splits"):
-        run.summarize([planned("train", "same", split="train"), planned("test", "same", task="Edit", split="test")], [])
-    with pytest.raises(ValueError, match="outside"):
-        run.summarize(cases, [measured("foreign", 100)])
-    with pytest.raises(ValueError, match="Duplicate"):
-        run.summarize(cases + [cases[0]], [])
-    with pytest.raises(ValueError, match="Stale output"):
-        run.summarize([planned("stale", "a", output_tikz="new")], [{"id": "stale", "comparison": {"source_hashes": {"output": hashlib.sha256(b"old").hexdigest()}}}])
-
-
-@pytest.mark.parametrize("stage", ["provider_error", "parse_error"])
-def test_generation_failure_does_not_become_a_compile_measurement(tmp_path, monkeypatch, stage):
-    case = planned("failed", "a", variant="saved failure", generation_status=stage,
-                   target_tikz="target", output_tikz="")
-    cases_path = tmp_path / "cases.jsonl"
-    cases_path.write_text(json.dumps(case) + "\n", encoding="utf-8")
-    compiler = MagicMock()
-    compiler.__enter__.return_value = compiler
-    compiler.get.return_value.json.return_value = {"toolchain_id": "offline-test"}
-    monkeypatch.setattr(run.httpx, "Client", lambda **kwargs: compiler)
-    observer = MagicMock(return_value={"compile_success": True, "compile": {"outcome": "ok"},
-                                      "metadata": {"input_tikz_sha256": hashlib.sha256(b"target").hexdigest()}})
-    monkeypatch.setattr(run, "observe_tikz", observer)
-    monkeypatch.setattr(run, "write_preview", MagicMock())
-    output = tmp_path / "run"
-    run.run(cases_path, output)
-    assert observer.call_count == 1 and observer.call_args.args[0] == "target"
-    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
-    assert report["results"][0]["comparison"]["scores"]["compile"] is None
-    assert report["inputs_sha256"] == hashlib.sha256((output / "inputs.json").read_bytes()).hexdigest()
-    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))[0]
-    assert summary["generation_failures"] == 1
-    assert summary["scores"]["compile"]["available"] == 0
-    assert summary["scores"]["compile"]["missing"] == 1
-    assert not {"controlled_validation", "scope", "counts"} & report.keys()
-    rescored = tmp_path / "rescore"
-    run.rescore(output / "report.json", rescored)
-    rescored_report = json.loads((rescored / "report.json").read_text(encoding="utf-8"))
-    assert rescored_report["results"] == report["results"]
-    assert observer.call_count == 1
-
-
-def test_changed_cached_pdf_is_rejected(tmp_path):
-    artifact = tmp_path / "result.pdf"
-    artifact.write_bytes(b"recorded")
-    observation = {"metadata": {"input_tikz_sha256": hashlib.sha256(b"tikz").hexdigest()}, "pdf_path": str(artifact),
-                   "artifacts": {"original": {"result.pdf": {"path": str(artifact), "sha256": hashlib.sha256(b"recorded").hexdigest()}}}}
-    run.verify_cached_observation(observation, "tikz")
-    artifact.write_bytes(b"changed")
-    with pytest.raises(ValueError, match="changed"):
-        run.verify_cached_observation(observation, "tikz")
-
-
-def test_explicit_geometry_space_and_removed_policy_wrapper(monkeypatch):
-    evaluator = MagicMock(return_value={})
-    monkeypatch.setattr(run, "evaluate", evaluator)
-    run._evaluate_case({"geometry_space": "affine_projection"}, {}, {})
+def test_cli_preview_reuses_the_compiled_pair(tmp_path, monkeypatch, capsys):
+    target, output, preview = tmp_path / 'target.tex', tmp_path / 'output.tex', tmp_path / 'preview.html'
+    target.write_text('target code', encoding='utf-8')
+    output.write_text('output code', encoding='utf-8')
+    events = []
+    @contextmanager
+    def observe_pair(first, second):
+        events.append((first, second))
+        yield {'compile_success': True}, {'compile_success': False}
+        assert preview.is_file()
+    scores = {'compile': 0, 'mathematical_correctness': 0.0, 'content_coverage': 0.0, 'visual_readability': 0.0}
+    monkeypatch.setattr(run, '_observe_pair', observe_pair)
+    monkeypatch.setattr(run, '_score_observations', Mock(return_value=scores))
+    evaluator = Mock(side_effect=AssertionError('Preview must not recompile through evaluate'))
+    monkeypatch.setattr(run, 'evaluate', evaluator)
+    monkeypatch.setattr('sys.argv', ['evaluation.run', '--target', str(target), '--output', str(output), '--preview', str(preview)])
+    run.main()
+    assert events == [('target code', 'output code')]
+    assert json.loads(capsys.readouterr().out) == scores
+    assert 'target code' in preview.read_text(encoding='utf-8')
+    assert 'output code' in preview.read_text(encoding='utf-8')
+    evaluator.assert_not_called()
+    monkeypatch.setattr('sys.argv', ['evaluation.run', '--target', str(target), '--output', str(output), '--preview', str(output)])
+    with pytest.raises(SystemExit):
+        run.main()
+    assert output.read_text(encoding='utf-8') == 'output code'
