@@ -113,3 +113,23 @@ def test_unresolved_outlines_cannot_earn_credit_and_overlaps_count_each_label_on
     assert len(measured["labels"][0]["issues"]) == 2
     scene["text"] = [{"text": "A", "bbox": [4, 4, 6, 6], "glyphs": []}]
     assert inspect_readability(scene)["labels"][0]["status"] == "unknown"
+
+
+def test_d_outline_with_tiny_self_intersection_preserves_its_hole():
+    import json
+    from pathlib import Path
+    from shapely.geometry import Point
+    drawings = json.loads((Path(__file__).parent / "fixtures/readability-d-glyph.json").read_text())
+    ink = glyph_ink(drawings)
+    assert ink.is_valid and 8 < ink.area < 10
+    assert ink.covers(Point(60.5, 221))
+    assert not ink.covers(Point(62, 221))
+
+
+def test_equality_marks_are_not_readability_labels():
+    labels = [{"text": text, "bbox": [4, 4, 6, 6],
+               "glyphs": [{"text": text, "ink": box(4, 4, 6, 6)}]}
+              for text in ("|", "||", "|||", "K", "|AB|")]
+    result = inspect_readability({"text": labels, "strokes": [], "bounds": [0, 0, 10, 10], "ink_issues": []})
+    assert [row["text"] for row in result["labels"]] == ["K", "|AB|"]
+    assert all(row["status"] == "fail" for row in result["labels"])

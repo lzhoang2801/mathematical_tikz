@@ -13,7 +13,7 @@ from itertools import pairwise
 from typing import Any
 
 import pymupdf
-from shapely.geometry import Polygon, box
+from shapely.geometry import LineString, box
 from shapely.ops import polygonize, unary_union
 
 from evaluation.tikz_geometry import path_parts
@@ -273,15 +273,20 @@ def glyph_ink(drawings: list[dict[str, Any]]) -> Any:
                 continue
             if part[-1] != part[0]:
                 part.append(part[0])
-            ring = Polygon(part)
-            if not ring.is_valid:
-                raise ValueError("Unsupported self-intersecting font contour")
-            signed = sum(a[0] * b[1] - b[0] * a[1] for a, b in pairwise(part))
-            rings.append((ring, 1 if signed > 0 else -1))
-        faces = polygonize(unary_union([ring.boundary for ring, _ in rings]))
+            rings.append(part)
+        faces = polygonize(unary_union([LineString(part) for part in rings]))
         for face in faces:
             point = face.representative_point()
-            winding = sum(sign for ring, sign in rings if ring.contains(point))
+            # PDF fill rules also admit self-intersecting contours. Classify each
+            # noded face by winding, preserving holes without repairing the font.
+            winding = 0
+            for part in rings:
+                for a, b in pairwise(part):
+                    side = (b[0] - a[0]) * (point.y - a[1]) - (point.x - a[0]) * (b[1] - a[1])
+                    if a[1] <= point.y < b[1] and side > 0:
+                        winding += 1
+                    elif b[1] <= point.y < a[1] and side < 0:
+                        winding -= 1
             has_ink = (
                 abs(winding) % 2 != 0
                 if drawing.get("even_odd")
@@ -339,6 +344,8 @@ def inspect_readability(scene: dict[str, Any]) -> dict[str, Any]:
     page = box(*scene["bounds"])
     labels, inks, resolved = [], [], []
     for label in scene["text"]:
+        if _normalize_text(label["text"]) and set(_normalize_text(label["text"])) <= {"|", "\u2223", "\u2016"}:
+            continue  # Bar-only equality marks intentionally cross their carriers.
         glyphs = label.get("glyphs", [])
         known = bool(glyphs) and all("ink" in glyph for glyph in glyphs)
         ink = unary_union([glyph["ink"] for glyph in glyphs]) if known else box(*label["bbox"]).buffer(-0.6)
