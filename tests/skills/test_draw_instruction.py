@@ -48,6 +48,10 @@ def test_parallel_draw_uses_actual_current_tikz_and_preserves_failures(tmp_path,
                 barrier.wait(timeout=3)
             if instruction == "Givens for bad":
                 raise RuntimeError("provider unavailable")
+            messages = [{"type": "ai", "response_metadata": {"finish_reason": "tool_calls"},
+                         "usage_metadata": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}},
+                        {"type": "ai", "content": "Model call limits exceeded", "usage_metadata": None}]
+            (artifact_dir / "messages.jsonl").write_text("\n".join(json.dumps(item) for item in messages), encoding="utf-8")
             return TikzResult(success=True, status="accepted", usable=True,
                               tikz=TIKZ_B, rendered_png_path=preview(artifact_dir))
         finally:
@@ -64,6 +68,7 @@ def test_parallel_draw_uses_actual_current_tikz_and_preserves_failures(tmp_path,
     assert ("Givens for edit unrelated ID", TIKZ_A) in calls
     assert outcomes[2]["current_tikz"] == TIKZ_A and outcomes[2]["target_tikz"] == TIKZ_B
     assert outcomes[1]["drawing_status"] == "failed"
+    assert outcomes[2]["model_calls"] == 1 and outcomes[2]["usage"]["total_tokens"] == 15
     assert all(outcome["verification"]["status"] == "candidate" for outcome in outcomes)
     assert all("HIDDEN TARGET" not in instruction for instruction, _ in calls)
     saved = [json.loads(line) for line in (tmp_path / "run/candidates.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -127,9 +132,9 @@ def test_compiler_queue_limits_requests_and_releases_failed_slot():
     [row("edit", "Edit", current_tikz=123)],
     [row("edit", "Edit", current_tikz=r"\documentclass{article}")],
     [row("generate", current_tikz=TIKZ_A)],
-    [row("generate", instruction="ABC vuông tại A; có các đoạn AH, BH.")],
-    [row("generate", instruction="ABC vuông tại A. Các đoạn BA′, CA′.")],
-    [row("generate", instruction="Đường tròn đường kính MN; OM và ON.")],
+    [row("generate", instruction="   ")],
+    [row("generate", instruction=None)],
+    [row("generate", instruction=123)],
     [row("edit", "Edit", base_id="legacy-shortcut")],
     [row("edit", "Edit", base_id="legacy-shortcut", current_tikz=TIKZ_A)],
     [{key: value for key, value in row("generate").items() if key != "current_tikz"}],
@@ -164,9 +169,9 @@ def test_export_rejects_original_parent_leakage_across_tasks_and_family_names(tm
     assert not (tmp_path / "leaked-export").exists()
     records[0]["instruction"] = "Đường tròn đường kính MN; OM và ON."
     records[0]["verification"]["reviewed_input_sha256"] = drawing.review_digest(records[0])
-    with pytest.raises(ValueError, match="boilerplate"):
-        drawing.export_rows(records[:1], tmp_path / "bad-instruction-export")
-    assert not (tmp_path / "bad-instruction-export").exists()
+    drawing.export_rows(records[:1], tmp_path / "reviewed-instruction-export")
+    with pytest.raises(ValueError, match="nonempty"):
+        drawing.validate_instruction("   ")
 
 
 def test_reviewed_parquet_roundtrip_and_stale_review_gate(tmp_path):
@@ -401,3 +406,72 @@ def test_existing_target_is_preserved_without_inventing_approval(tmp_path):
     assert "trace_id" not in result[0]
     report = json.loads((tmp_path / "run/report.json").read_text(encoding="utf-8"))
     assert report["pending_rows"] == 0 and report["max_model_calls_total"] == 0
+
+
+@pytest.mark.parametrize("permanent", [False, True])
+def test_parquet_replace_retries_short_locks_without_losing_previous_snapshot(tmp_path, monkeypatch, permanent):
+    import pyarrow.parquet as pq
+
+    target = tmp_path / "snapshot.parquet"
+    drawing.write_parquet([row("old")], target)
+    original = target.read_bytes()
+    replace = Path.replace
+    attempts = []
+
+    def locked(path, destination):
+        attempts.append(1)
+        if permanent or len(attempts) < 3:
+            raise PermissionError("locked reader")
+        return replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", locked)
+    monkeypatch.setattr(drawing, "sleep", lambda seconds: None)
+    if permanent:
+        with pytest.raises(PermissionError):
+            drawing.write_parquet([row("new")], target)
+        assert len(attempts) == 4 and target.read_bytes() == original
+    else:
+        drawing.write_parquet([row("new")], target)
+        assert len(attempts) == 3
+        assert pq.read_table(target).to_pylist()[0]["id"] == "new"
+    assert not target.with_suffix(".parquet.tmp").exists()
+
+
+@pytest.mark.parametrize("kind", ["checkpoint", "production", "candidates"])
+@pytest.mark.parametrize("permanent", [False, True])
+def test_json_snapshot_replace_retries_and_preserves_old_file(tmp_path, monkeypatch, kind, permanent):
+    from tools import run_synthetic_dataset as production
+
+    target = tmp_path / ("candidates.jsonl" if kind == "candidates" else "snapshot.jsonl")
+    target.write_text("old\n", encoding="utf-8")
+    replace = Path.replace
+    attempts = []
+
+    def locked(path, destination):
+        if destination == target:
+            attempts.append(1)
+            if permanent or len(attempts) < 3:
+                raise PermissionError("locked reader")
+        return replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", locked)
+    monkeypatch.setattr(drawing, "sleep", lambda seconds: None)
+    monkeypatch.setattr(drawing, "write_parquet", lambda rows, path: None)
+
+    def write():
+        if kind == "checkpoint":
+            drawing.save_json(target, row("new"))
+        elif kind == "production":
+            production.write_rows(target, [row("new")])
+        else:
+            drawing.save_candidates(tmp_path, {"new": row("new")})
+
+    if permanent:
+        with pytest.raises(PermissionError):
+            write()
+        assert len(attempts) == 4
+        assert target.read_text(encoding="utf-8") == "old\n"
+    else:
+        write()
+        assert len(attempts) == 3
+        assert json.loads(target.read_text(encoding="utf-8"))["id"] == "new"

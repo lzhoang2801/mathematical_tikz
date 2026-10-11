@@ -112,3 +112,5 @@ The optional preview contains both renders, scores and TikZ sources. Set `COMPIL
 Supported observations: labeled points, straight solid/dashed segments, full circles and square corner marks. Gxx labels do not select scoring logic. General arcs/conics, filled regions and unmarked metric givens are outside the implemented checks; unsupported output geometry currently also withholds readability credit. **100% means all extracted checks passed**, not that unstated problem requirements were proved.
 
 Implementation: [evaluator](../evaluation/evaluator.py), [geometry](../evaluation/tikz_geometry.py), [coverage](../evaluation/tikz_coverage.py), [readability](../evaluation/tikz_readability.py). Regression tests cover valid transformations/reconstructions, missing content, broken relations and label collisions under [tests/evaluation](../tests/evaluation/).
+
+[Vietnamese report section and figures](evaluation-report-vi.md).

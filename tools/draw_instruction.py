@@ -8,10 +8,12 @@ import os
 import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from importlib.metadata import version
 from io import BytesIO
 from pathlib import Path
-from time import perf_counter
+from threading import BoundedSemaphore
+from time import perf_counter, sleep
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -27,17 +29,33 @@ from agent.latex.tikz import validate_tikz
 from PIL import Image
 
 
+class CompilerClient(httpx.Client):
+    """Queue locally before the native compiler client's three-second pool deadline."""
+
+    def __init__(self, *, concurrency: int, **kwargs):
+        super().__init__(**kwargs)
+        self._slots = BoundedSemaphore(concurrency)
+
+    @contextmanager
+    def stream(self, *args, **kwargs):
+        with self._slots, super().stream(*args, **kwargs) as response:
+            yield response
+
+
 def encoded(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
 
 
 def review_digest(row: dict) -> str:
     """Bind review to the exact inputs, target/PNG, rubric and source-family lineage."""
-    fields = ("task", "instruction", "current_tikz", "target_tikz", "evaluation_rubric",
+    fields = ("task", "instruction", "current_tikz", "target_tikz", "image", "evaluation_rubric",
               "source", "source_group", "provenance", "grade", "diagram_types")
     image = target_image(row)
     payload = {key: row.get(key) for key in fields}
     payload["tikz_image_sha256"] = hashlib.sha256(image["bytes"]).hexdigest() if image else None
+    if row.get("task") == "Reconstruct":
+        source = source_image(row)
+        payload["source_image_sha256"] = hashlib.sha256(source["bytes"]).hexdigest() if source else None
     return hashlib.sha256(encoded(payload).encode("utf-8")).hexdigest()
 
 
@@ -45,19 +63,22 @@ def load_rows(path: Path) -> list[dict]:
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     seen, splits = set(), {}
     for row in rows:
-        if not isinstance(row, dict) or any(not isinstance(row.get(k), str) or not row[k].strip()
-                                           for k in ("id", "instruction", "source", "source_group")):
-            raise ValueError("Each row needs nonempty id, instruction, source and source_group")
-        if row["id"] in seen or row.get("task") not in ("Generate", "Edit"):
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"].strip():
+            raise ValueError("Each row needs a nonempty id")
+        if row["id"] in seen or row.get("task") not in ("Generate", "Edit", "Reconstruct"):
             raise ValueError(f"{row['id']}: duplicate ID or invalid task")
         seen.add(row["id"])
+        if row["task"] != "Reconstruct" or row.get("instruction") is not None:
+            validate_instruction(row.get("instruction"))
         split = row.get("split")
         if split not in (None, "train", "validation", "test"):
             raise ValueError(f"{row['id']}: invalid split")
-        group = row["source_group"]
-        if split is not None and group in splits and splits[group] != split:
+        group = row.get("source_group")
+        if group is not None and (not isinstance(group, str) or not group.strip()):
+            raise ValueError(f"{row['id']}: source_group must be null or a nonempty string")
+        if group is not None and split is not None and group in splits and splits[group] != split:
             raise ValueError(f"{group}: conflicting family splits")
-        if split is not None:
+        if group is not None and split is not None:
             splits[group] = split
         encoded(row)
     if not rows:
@@ -65,8 +86,17 @@ def load_rows(path: Path) -> list[dict]:
     return rows
 
 
+def validate_instruction(instruction: str) -> None:
+    """Check the input boundary; authoring quality belongs to the prompt and review."""
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise ValueError("Instruction must be a nonempty string")
+
+
 def validate_requests(rows: list[dict]) -> None:
     for row in rows:
+        if row.get("task") not in ("Generate", "Edit"):
+            raise ValueError("Drawing accepts Generate/Edit; imported Reconstruct pairs can be reviewed and exported")
+        validate_instruction(row["instruction"])
         if "base_id" in row:
             raise ValueError(f"{row['id']}: base_id is unsupported; supply actual current_tikz for Edit")
         if "current_tikz" not in row:
@@ -81,12 +111,24 @@ def validate_requests(rows: list[dict]) -> None:
             validate_tikz(current)
 
 
+def replace_snapshot(temporary: Path, path: Path) -> None:
+    """Retry short Windows reader locks without overwriting the live file in place."""
+    for attempt in range(4):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 3:
+                raise
+            sleep(0.25 * (attempt + 1))
+
+
 def save_json(path: Path, value: object) -> None:
     """Replace a checkpoint only after its complete JSON has been written."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(encoded(value) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    replace_snapshot(temporary, path)
 
 
 def target_image(row: dict) -> dict | None:
@@ -135,18 +177,38 @@ def target_image(row: dict) -> dict | None:
     return None
 
 
+def source_image(row: dict) -> dict | None:
+    """Read the explicitly bound reconstruction input: original crop or synthetic render."""
+    reference = row.get("image")
+    if not isinstance(reference, dict) or not isinstance(reference.get("path"), str):
+        return None
+    try:
+        data = Path(reference["path"]).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != reference.get("sha256"):
+            return None
+        with Image.open(BytesIO(data)) as picture:
+            suffix = picture.format.lower()
+            picture.verify()
+    except (OSError, ValueError):
+        return None
+    return {"bytes": data, "path": f"{digest}.{suffix}"}
+
+
 def write_parquet(rows: list[dict], path: Path) -> None:
     """Write a closed, readable HF image table, then replace the previous snapshot."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    fields = ("id", "task", "instruction", "current_tikz", "target_tikz", "source", "source_group", "split",
+    fields = ("schema_version", "id", "task", "instruction", "current_tikz", "target_tikz", "source", "source_group", "split",
               "grade", "diagram_types")
-    schema = pa.schema([(k, pa.string()) for k in fields[:8]] +
+    schema = pa.schema([(k, pa.string()) for k in fields[:-2]] +
                        [("grade", pa.int64()), ("diagram_types", pa.list_(pa.string())),
                         ("evaluation_rubric", pa.string()), ("metadata", pa.string()),
-                        ("tikz_image", pa.struct([("bytes", pa.binary()), ("path", pa.string())]))],
-                       metadata={"huggingface": encoded({"info": {"features": {"tikz_image": {"_type": "Image"}}}})})
+                         ("tikz_image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])),
+                         ("image", pa.struct([("bytes", pa.binary()), ("path", pa.string())]))],
+                       metadata={"huggingface": encoded({"info": {"features": {
+                           "tikz_image": {"_type": "Image"}, "image": {"_type": "Image"}}}})})
     records = []
     for row in rows:
         image = target_image(row)
@@ -155,12 +217,12 @@ def write_parquet(rows: list[dict], path: Path) -> None:
             metadata.update(target_tikz_sha256=hashlib.sha256(row["target_tikz"].encode("utf-8")).hexdigest(),
                             tikz_image_sha256=hashlib.sha256(image["bytes"]).hexdigest())
         records.append({**{k: row.get(k) for k in fields}, "evaluation_rubric": encoded(row.get("evaluation_rubric")),
-                        "metadata": encoded(metadata), "tikz_image": image})
+                        "metadata": encoded(metadata), "tikz_image": image, "image": source_image(row)})
     temporary = path.with_suffix(".parquet.tmp")
     try:
         pq.write_table(pa.Table.from_pylist(records, schema=schema), temporary,
                        compression="zstd", row_group_size=100)
-        temporary.replace(path)
+        replace_snapshot(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -169,7 +231,7 @@ def save_candidates(output: Path, latest: dict[str, dict]) -> None:
     rows = list(latest.values())
     temporary = output / "candidates.tmp"
     temporary.write_text("".join(encoded(row) + "\n" for row in rows), encoding="utf-8")
-    temporary.replace(output / "candidates.jsonl")
+    replace_snapshot(temporary, output / "candidates.jsonl")
     # ponytail: rewrite the ~1,500-row snapshot per result; use fragments for much larger runs.
     write_parquet(rows, output / "candidates.parquet")
 
@@ -230,6 +292,7 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
     from agent.workflows.problem_tikz import problem_tikz
     from langsmith import tracing_context
 
+    started = perf_counter()
     outcomes = completed_rows(rows, output, resume=resume, retry_ids=retry_ids)
     latest = saved_rows(output) if resume else {}
     pending = [row for row in rows if row["id"] not in outcomes]
@@ -270,18 +333,25 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
                   "verification": {"status": "candidate", "reviewed_by": None}}
         trace_id, started = uuid4(), perf_counter()
         case = output / "cases" / hashlib.sha256(row["id"].encode("utf-8")).hexdigest()
-        directory = case / str(trace_id)
+        # Keep native UUID/render subdirectories below Windows' path-length limit.
+        directory = output / "artifacts" / trace_id.hex
         directory.mkdir(parents=True)
         record.update(trace_id=str(trace_id), artifact_dir=str(directory), session_dir=str(session))
         try:
             with tracing_context(enabled=trace_client is not None, client=trace_client,
                                  project_name=project, parent=False):
                 configured = agent.with_config(run_id=trace_id, tags=["synthetic-tikz"],
-                                               metadata={"record_id": row["id"], "source_group": row["source_group"]})
+                                               metadata={"record_id": row["id"], "source_group": row.get("source_group")})
                 result = problem_tikz(instruction=row["instruction"], current_tikz=record["current_tikz"],
                                       artifact_dir=directory, agent=configured, compiler_http=compiler_http)
             record.update(success=result.success, drawing_status=result.status, target_tikz=result.tikz,
                           rendered_png_path=result.rendered_png_path, unresolved_issues=result.unresolved_issues)
+            messages = [json.loads(line) for line in (directory / "messages.jsonl").read_text(encoding="utf-8").splitlines()] if (directory / "messages.jsonl").is_file() else []
+            responses = [message for message in messages if message.get("type") == "ai"
+                         and (message.get("response_metadata") or message.get("usage_metadata"))]
+            record["model_calls"] = len(responses)
+            record["usage"] = {key: sum((message.get("usage_metadata") or {}).get(key, 0) or 0 for message in responses)
+                               for key in ("input_tokens", "output_tokens", "total_tokens")}
             if result.tikz and result.rendered_png_path:
                 record.update(rendered_tikz_sha256=hashlib.sha256(result.tikz.encode("utf-8")).hexdigest(),
                               rendered_png_sha256=hashlib.sha256(Path(result.rendered_png_path).read_bytes()).hexdigest())
@@ -309,6 +379,9 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
             save_candidates(output, latest)
             print(encoded({"id": record["id"], "drawing_status": record["drawing_status"]}), flush=True)
     report["counts"] = dict(Counter(row["drawing_status"] for row in outcomes.values()))
+    report["elapsed_seconds"] = round(perf_counter() - started, 3)
+    report["successful_new_drawings"] = sum(outcomes[row["id"]].get("success") is True for row in pending)
+    report["successful_drawings_per_minute"] = round(report["successful_new_drawings"] * 60 / max(perf_counter() - started, .001), 3)
     save_json(session / "report.json", report)
     save_json(output / "report.json", report)
     return [outcomes[row["id"]] for row in rows]
@@ -316,19 +389,31 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
 
 def export_rows(rows: list[dict], output: Path) -> dict:
     """Export reviewed pairs only; never infer readiness from drawing completion."""
-    seen = set()
+    seen, lineage_splits = set(), {}
     for row in rows:
+        if row.get("task") not in ("Generate", "Edit", "Reconstruct"):
+            raise ValueError(f"{row['id']}: unknown task")
+        if row["task"] != "Reconstruct" or row.get("instruction") is not None:
+            validate_instruction(row.get("instruction"))
         review = row.get("verification", {})
         if (not isinstance(review, dict) or review.get("status") != "ready"
                 or not isinstance(review.get("reviewed_by"), str) or not review["reviewed_by"].strip()
                 or review.get("reviewed_input_sha256") != review_digest(row)):
             raise ValueError(f"{row['id']}: missing review or changed instruction/target/rubric")
-        if row.get("split") is None or not isinstance(row.get("evaluation_rubric"), list):
-            raise ValueError(f"{row['id']}: assigned split and fixed rubric required")
+        if row.get("split") not in (None, "train", "validation", "test"):
+            raise ValueError(f"{row['id']}: invalid split")
+        parents = (row.get("provenance") or {}).get("parents", [])
+        if not isinstance(parents, list) or any(not isinstance(parent, str) or not parent.strip() for parent in parents):
+            raise ValueError(f"{row['id']}: invalid original parents")
+        for key in [("family", row.get("source_group")), *(("parent", parent) for parent in parents)]:
+            if key[1] is None or row.get("split") is None:
+                continue
+            if key in lineage_splits and lineage_splits[key] != row["split"]:
+                raise ValueError(f"{key[1]}: conflicting lineage splits")
+            lineage_splits[key] = row["split"]
         grade, types = row.get("grade"), row.get("diagram_types")
         if (grade is not None and (type(grade) is not int or not 6 <= grade <= 12)
-                or not isinstance(types, list) or not types
-                or any(not isinstance(code, str) or code not in {f"G{n:02d}" for n in range(1, 18)} for code in types)):
+                or types is not None and (not isinstance(types, list) or any(not isinstance(code, str) for code in types))):
             raise ValueError(f"{row['id']}: invalid grade or diagram_types")
         if not isinstance(row.get("target_tikz"), str) or not row["target_tikz"].strip():
             raise ValueError(f"{row['id']}: complete target_tikz required")
@@ -338,22 +423,25 @@ def export_rows(rows: list[dict], output: Path) -> dict:
         current = row.get("current_tikz")
         if row["task"] == "Generate" and current is not None:
             raise ValueError(f"{row['id']}: Generate has starting TikZ")
+        if row["task"] == "Reconstruct" and (current is not None or source_image(row) is None):
+            raise ValueError(f"{row['id']}: Reconstruct requires its verified source image and null current_tikz")
         if row["task"] == "Edit":
             if not isinstance(current, str) or not current.strip() or current == row["target_tikz"]:
                 raise ValueError(f"{row['id']}: Edit needs an actual changed starting/ending pair")
             validate_tikz(current)
-        key = tuple(row.get(k) for k in ("task", "instruction", "current_tikz", "target_tikz"))
+        key = (*tuple(row.get(k) for k in ("task", "instruction", "current_tikz", "target_tikz")),
+               (row.get("image") or {}).get("sha256"))
         if key in seen:
             raise ValueError(f"{row['id']}: duplicate task/input/target")
         seen.add(key)
     output.mkdir(parents=True, exist_ok=False)
     files = {}
-    for task in ("Generate", "Edit"):
-        for split in ("train", "validation", "test"):
-            selected = [row for row in rows if row["task"] == task and row["split"] == split]
+    for task in ("Generate", "Edit", "Reconstruct"):
+        for split in (None, "train", "validation", "test"):
+            selected = [row for row in rows if row["task"] == task and row.get("split") == split]
             if not selected:
                 continue
-            path = output / task.lower() / f"{split}.parquet"
+            path = output / task.lower() / f"{split or 'data'}.parquet"
             path.parent.mkdir(exist_ok=True)
             write_parquet(selected, path)
             files[str(path)] = len(selected)
@@ -368,6 +456,8 @@ def main() -> int:
     parser.add_argument("--retry-id", action="append", help="Redraw this ID even if it has a completed target; may repeat")
     parser.add_argument("--export", action="store_true", help="Export ready reviewed pairs; no model calls")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--compiler-concurrency", type=int, default=2,
+                        help="Compiler HTTP connections; the shared service currently admits two operations")
     parser.add_argument("--max-model-calls", type=int, default=4)
     parser.add_argument("--limit", type=int, default=128, help="Maximum pending rows to draw in this invocation")
     parser.add_argument("--compiler-url", default=os.environ.get("COMPILER_URL", "http://127.0.0.1:18080"))
@@ -378,8 +468,8 @@ def main() -> int:
             print(encoded(export_rows(rows, args.output.resolve())))
             return 0
         validate_requests(rows)
-        if not 1 <= args.workers <= 4 or not 2 <= args.max_model_calls <= 4:
-            raise ValueError("workers must be 1-4; max-model-calls must be 2-4")
+        if not 1 <= args.workers <= 32 or not 1 <= args.compiler_concurrency <= 2 or not 2 <= args.max_model_calls <= 4:
+            raise ValueError("workers must be 1-32; compiler-concurrency 1-2; max-model-calls 2-4")
         complete = completed_rows(rows, args.output.resolve(), resume=args.resume, retry_ids=args.retry_id)
         if args.limit < 1 or len(rows) - len(complete) > args.limit:
             raise ValueError(f"Pending rows exceed the declared drawing budget ({args.limit})")
@@ -401,13 +491,17 @@ def main() -> int:
         safe_endpoint = endpoint._replace(netloc=endpoint.netloc.rsplit("@", 1)[-1], query="", fragment="").geturl()
         client = Client()
         try:
-            with httpx.Client(base_url=args.compiler_url, timeout=150, trust_env=False) as compiler:
+            limits = httpx.Limits(max_connections=args.compiler_concurrency,
+                                 max_keepalive_connections=args.compiler_concurrency)
+            with CompilerClient(concurrency=args.compiler_concurrency, base_url=args.compiler_url,
+                                timeout=150, trust_env=False, limits=limits) as compiler:
                 ready = compiler.get("/readyz")
                 ready.raise_for_status()
                 result = draw_batch(rows, args.output.resolve(), agent=agent, compiler_http=compiler,
                                     workers=args.workers, project=os.environ["LANGSMITH_PROJECT"], trace_client=client,
                                     resume=args.resume, retry_ids=args.retry_id,
                                     run_metadata={"max_model_calls_per_row": args.max_model_calls,
+                                                  "compiler_concurrency": args.compiler_concurrency,
                                                   "max_model_calls_total": (len(rows) - len(complete)) * args.max_model_calls,
                                                   "row_budget": args.limit, "model": model.model_name,
                                                   "provider_endpoint": safe_endpoint,

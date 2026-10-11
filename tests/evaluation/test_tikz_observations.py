@@ -257,3 +257,38 @@ def test_compiler_transport_failure_remains_unavailable(tmp_path):
     assert observed["compile"]["outcome"] == "unknown"
     assert observed["compile_success"] is False and observed["labeled_points"] == {}
     assert observed["pdf_path"] is None
+
+
+def test_dataset_comments_and_shared_libraries_compile_without_rewriting_source(tmp_path):
+    source = (
+        "% Geo3K source; ignored example \\input{ignored}\n"
+        "\\usetikzlibrary{calc, angles}\n"
+        "% keep layout comments\n"
+        + TIKZ.replace("\\coordinate (A)", "% original point\n\\coordinate (A)")
+        + "\n% trailing comment"
+    )
+    client, requests = _discovery_compiler()
+    with client:
+        observed = compile_observe(source, tmp_path / "dataset", client)
+    assert observed["compile_success"] is True
+    assert len(requests) == 2
+    assert source in requests[0].source
+    assert "% original point" in requests[1].source
+    assert Path(observed["source_path"]).read_text(encoding="utf-8") == requests[0].source
+
+
+@pytest.mark.parametrize("source", [
+    "surrounding prose\n" + TIKZ,
+    "\\documentclass{standalone}\n" + TIKZ,
+    "\\usetikzlibrary{external}\n" + TIKZ,
+    TIKZ.replace("\\coordinate (A)", "\\input{secret}\n\\coordinate (A)"),
+    TIKZ + "\n" + TIKZ,
+    "% ^^ encoded characters\n" + TIKZ,
+])
+def test_evaluation_source_compatibility_retains_shared_safety_checks(tmp_path, source):
+    client, requests = _discovery_compiler()
+    with client:
+        observed = compile_observe(source, tmp_path / "invalid", client)
+    assert observed["compile_success"] is False
+    assert observed["compile"]["outcome"] == "validation_failed"
+    assert requests == []

@@ -1,0 +1,48 @@
+{
+  "split": "train",
+  "examples": [
+    {
+      "task": "generate",
+      "id": "6848a4c8-b788-56e3-b76a-d7dc650f138a",
+      "parquet": "dataset/synthetic/hf/generate/train.parquet",
+      "parquet_sha256": "709356e7023211eacd300127ef100086d314451d88aeebad3a84362c4ef7dab8",
+      "target_tikz_sha256": "6cb31b218af65bce40e3910d492c83500e91be0829e204ad6d70fb8827c16d81",
+      "figure": "fig:dataset-examples"
+    },
+    {
+      "task": "edit",
+      "id": "006c8c65-a054-54d6-bb27-f347ca5abacf",
+      "parquet": "dataset/synthetic/hf/edit/train.parquet",
+      "parquet_sha256": "d21aa0be0b4ef4648a31df7712fac0c446a167d3273c3b5852a07994f6ecd663",
+      "target_tikz_sha256": "87480c50cef8998e595c93c8cdd1f61f5ed1a56f85540da66af6ae4d1965420c",
+      "current_tikz_sha256": "2a8dcd0054f9fcad234cfe0446931c2289ad489d0dca5ddf6b08f5d6a48616fd",
+      "figure": "fig:dataset-edit"
+    },
+    {
+      "task": "reconstruct",
+      "id": "2473dd8b6ca1ce13c3c152ea3c85ae5999cd9c94d459e47a1c8faef1752a262d",
+      "parquet": "dataset/synthetic/hf/reconstruct/train.parquet",
+      "parquet_sha256": "140e725e7d22f6b76b300df0c3180c6ee10711f2f2d852d0924bc6f7ddb392ea",
+      "target_tikz_sha256": "7141e9e51b76113c3baeba98c042f55d9586338cc71c8b09d126ab345afc9656",
+      "figure": "fig:dataset-reconstruct"
+    }
+  ],
+  "reconstruct_image_sha256": "2473dd8b6ca1ce13c3c152ea3c85ae5999cd9c94d459e47a1c8faef1752a262d",
+  "counts": {
+    "reconstruct": {
+      "train": 1467,
+      "validation": 375,
+      "test": 1160
+    },
+    "generate": {
+      "train": 1208,
+      "validation": 151,
+      "test": 151
+    },
+    "edit": {
+      "train": 795,
+      "validation": 97,
+      "test": 97
+    }
+  }
+}

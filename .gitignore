@@ -168,3 +168,9 @@ cython_debug/
 .tmp/
 *.jpg
 runs/
+dataset/**
+!dataset/**/
+!dataset/**/edit.jsonl
+!dataset/**/generate.jsonl
+!dataset/**/*.parquet
+!dataset/synthetic/excluded.jsonl

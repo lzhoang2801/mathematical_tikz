@@ -114,7 +114,7 @@ Tập ảnh gồm **23 loại hình: 17 loại Hình học (G01–G17) và 6 lo�
 | --- | --- | --- |
 | **Generate** | `instruction`: đề bài hoặc yêu cầu vẽ từ ví dụ/luyện tập/bài tập | `target_tikz` |
 | **Edit** | `current_tikz` + `instruction` | `target_tikz` |
-| **Reconstruct** | `image` + `instruction` | `target_tikz` |
+| **Reconstruct** | `image` | `target_tikz` |
 
 TikZ đã có từ Generate hoặc Reconstruct có thể tiếp tục làm input cho Edit.
 

@@ -10,7 +10,8 @@ from typing import Any
 
 import httpx
 import pymupdf
-from agent.latex.tikz import standalone_tikz_document, validate_tikz
+from agent.latex._tex import _without_tex_comments
+from agent.latex.tikz import SUPPORTED_TIKZ_LIBRARIES, standalone_tikz_document, validate_tikz
 from latex_compiler.client import compile as compile_latex
 from latex_compiler.schemas import CompileRequest, Images, Outputs
 from shapely.geometry import LineString
@@ -555,6 +556,20 @@ def _pdf_observations(pdf: bytes, pdf_sha256: str, source_digest: str) -> dict[s
     }
 
 
+def _validate_evaluation_tikz(tikz: str) -> str:
+    """Allow dataset comments and shared libraries while compiling the exact source."""
+    if "^^" in tikz:
+        raise ValueError("TikZ output must not contain TeX character-code notation.")
+    inspected = _without_tex_comments(tikz).strip()
+    while match := re.match(r"\\usetikzlibrary\s*\{([^{}]*)\}", inspected):
+        libraries = {name.strip() for name in match[1].split(",")}
+        if not libraries <= set(SUPPORTED_TIKZ_LIBRARIES):
+            raise ValueError("TikZ libraries must come from the shared wrapper.")
+        inspected = inspected[match.end():].lstrip()
+    validate_tikz(inspected)
+    return tikz.strip()
+
+
 def compile_observe(tikz: str, artifact_dir: Path, compiler_http: httpx.Client) -> dict[str, Any]:
     """Compile the original, then accept runtime discovery only when its render is unchanged."""
     metadata = {"schema_version": SCHEMA_VERSION, "input_tikz_sha256": _sha256(tikz.encode("utf-8"))}
@@ -565,7 +580,7 @@ def compile_observe(tikz: str, artifact_dir: Path, compiler_http: httpx.Client) 
         "pdf_observations": None, "artifacts": {}, "metadata": metadata,
     }
     try:
-        canonical = validate_tikz(tikz)
+        canonical = _validate_evaluation_tikz(tikz)
     except ValueError as error:
         result["compile"] = {"outcome": "validation_failed", "success": False, "diagnostic": str(error)}
         return result
