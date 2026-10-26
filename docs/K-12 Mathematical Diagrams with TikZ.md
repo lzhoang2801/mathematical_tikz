@@ -1,172 +1,66 @@
-# K-12 Mathematical Diagrams with TikZ: Generate, Edit & Reconstruct
+# Mathematical geometry diagrams with TikZ
 
-## 1. Problem statement
+The project builds editable TikZ diagrams for mathematical geometry in grades 6–12. A diagram expresses a configuration through geometric objects, their relationships, constructions, labels and relation marks.
 
-Bài toán là chuyển nội dung toán học và hình vẽ trong tài liệu phổ thông thành **TikZ có thể chỉnh sửa và tái sử dụng**. TikZ đầu ra cần biểu diễn đúng đối tượng, quan hệ toán học, nhãn và quy ước trình bày.
+The geometry scope and source-selection principles are defined in [geometry-k12-vn.md](geometry-k12-vn.md).
+
+## Tasks
+
+Generate creates a diagram from a self-contained description of a geometric configuration. Edit applies a specified change to an existing TikZ diagram. Reconstruct recreates the diagram shown in an image. All three tasks produce TikZ source.
 
 ```text
-Đề bài / yêu cầu vẽ ── Generate → TikZ
-Ảnh ─────────────── Reconstruct → TikZ
-                                    ↓
-                            TikZ + yêu cầu sửa ── Edit → TikZ mới
+Geometric givens and requested constructions -> Generate -> TikZ
+Current TikZ and edit instruction            -> Edit -> completed TikZ
+Diagram image                               -> Reconstruct -> TikZ
 ```
 
-## 2. Why TikZ?
+<a id="task-inputs"></a>
 
-TikZ phù hợp vì nó vừa là output để render, vừa là một structured representation của diagram:
+### Task inputs
 
-- biểu diễn hình bằng các primitive và command có cấu trúc
-- compile thành vector graphic
-- source code có thể inspect, edit và version
-
-**AutomaTikZ** đã chứng minh `text → TikZ` là một formulation khả thi cho scientific figure generation, với dataset DaTikZ gồm khoảng 120k cặp caption–TikZ và fine-tuning language model để sinh TikZ trực tiếp [1].
-
-**GeoTikzBridge** cho thấy việc sử dụng geometric structures thông qua TikZ code có thể cải thiện geometric perception và downstream reasoning của models phục vụ việc giải toán hình [2].
-
-## 3. Related work
-
-### Approach A: Text → TikZ
-
-```
-Text → Model → TikZ → Diagram
-```
-
-Model học trực tiếp mapping giữa mô tả hình học và TikZ code.
-
-Các research tiêu biểu:
-
-- **AutomaTikZ**: fine-tune language model trên caption–TikZ pairs [1].
-- **TikZilla**: mở rộng Text-to-TikZ bằng dataset lớn hơn, sau đó train theo hai giai đoạn SFT → Reinforcement Learning, trong đó reward có sử dụng thông tin từ rendered image [3].
-
-Pipeline đơn giản nhưng khó khăn cho model phải học cùng lúc semantic geometry, spatial layout, coordinate placement và TikZ syntax.
-
-### Approach B: Text → Geometry IR → Solver → Diagram
-
-Thay vì sinh drawing code trực tiếp, model dựa theo quy ước về một representation hình học có cấu trúc.
-
-```
-Text → Model → Geometry IR → Constraint / Coordinate Solver → TikZ
-```
-
-Geometry IR có thể mô tả các primitives và constraints như:
-
-```
-Triangle(A, B, C)
-Midpoint(M, B, C)
-Perpendicular(AH, BC)
-Parallel(MN, BC)
-```
-
-Ý tưởng chính là tách hai vấn đề:
-
-```
-Language understanding / geometric semantics → Geometry IR → Coordinate & layout realization
-```
-
-**MagicGeo** formalize textual geometry thành một formal representation rồi dùng coordinate solver để bảo đảm các quan hệ hình học trước khi render [4].
-
-Một ví dụ gần đây rõ hơn là **GeoLoom**, với pipeline:
-
-```
-Text → GeoLingua → Coordinate Solver → Diagram
-```
-
-GeoLingua đóng vai trò Geometry IR, mô tả shape, constructive dependence và các length/angle constraints. GeoLoom đồng thời xây dựng GeoNF, một dataset ghép natural-language descriptions với formal representations [5].
-
-### Concept C: Geometry IR cho verification
-
-Geometry IR không nhất thiết phải nằm trong generation path.
-
-Một pipeline khác là:
-
-```
-Text → Model → TikZ → Geometry IR → Structural validation
-```
-
-**DiagramIR** sử dụng intermediate representation của TikZ để đánh giá geometric diagrams bằng các rule-based checks, thay vì chỉ dựa vào image similarity hoặc LLM-as-a-Judge [6].
-
-## 4. Dataset
-
-Nguồn chuẩn bị dataset là **ảnh diagram lớp 6–12** và **ví dụ, luyện tập, bài tập lớp 6–9** trong corpus SGK/SGV đã xử lý. Danh sách tuyển lưu ảnh cụ thể và nguyên văn từng bài, có thông tin phân loại và nguồn đối chiếu [8, 9].
-
-### Quy mô nguồn đã tuyển
-
-| Lớp | Ảnh diagram | Ví dụ | Luyện tập | Bài tập |
-| --- | ---: | ---: | ---: | ---: |
-| 6 | 307 | 13 | 18 | 102 |
-| 7 | 301 | 49 | 33 | 150 |
-| 8 | 343 | 43 | 32 | 143 |
-| 9 | 289 | 60 | 33 | 175 |
-| 10 | 237 | — | — | — |
-| 11 | 442 | — | — | — |
-| 12 | 285 | — | — | — |
-| **Tổng** | **2.204** | **165** | **116** | **570** |
-
-Tập ảnh gồm **23 loại hình: 17 loại Hình học (G01–G17) và 6 loại Đại số (A01–A06)**. **851 đơn vị nội dung** được tính theo từng ví dụ/luyện tập/bài tập hoàn chỉnh, gồm các tiểu ý đi kèm. Đây là nguồn đã tuyển để xây dựng các cặp có `target_tikz` [9].
-
-![Phạm vi loại hình trong bộ dữ liệu Toán](dataset-coverage-overview.png)
-
-![Phân bố ảnh theo loại hình](dataset-type-counts.png)
-
-### Cấu trúc mẫu
-
-| Task | Input | Target |
+| Task | Sample input | Target |
 | --- | --- | --- |
-| **Generate** | `instruction`: đề bài hoặc yêu cầu vẽ từ ví dụ/luyện tập/bài tập | `target_tikz` |
-| **Edit** | `current_tikz` + `instruction` | `target_tikz` |
-| **Reconstruct** | `image` | `target_tikz` |
+| Generate | `instruction`: geometric givens and requested constructions | `target_tikz` |
+| Edit | `current_tikz` + `instruction`: the existing diagram and requested change | `target_tikz` |
+| Reconstruct | `image`: exactly one diagram image | `target_tikz` |
 
-TikZ đã có từ Generate hoặc Reconstruct có thể tiếp tục làm input cho Edit.
+The `system` message defines task behavior and output format for every task. The `user` message contains the sample input in the table. During training, the `assistant` message contains the exact `target_tikz`.
 
-### Thuộc tính phân loại
+Reconstruct's user content contains only the diagram image. Shared record schemas store its `instruction` and `current_tikz` as absent or `null`. Its system instruction supplies the reconstruction behavior.
 
-| Thuộc tính | Nội dung |
+Generate instructions define the named objects, premises, dependencies, branch conditions and drawing scope. Edit instructions define the change against the actual supplied diagram. Completed TikZ from any task can provide the starting state for a subsequent Edit.
+
+### Target representation
+
+The target is the exact TikZ source for one diagram, with a verified render when preparing a training pair. Task system instructions specify the required output format. Shared wrapping, library support and compile bindings follow [dataset conventions](../dataset/CONVENTIONS.md).
+
+## Dataset preparation
+
+Prepare sources from complete geometry examples, practice problems and exercises, plus checked image/code pairs. Preserve the original givens and introduce purposeful auxiliary constructions with explicit definitions.
+
+The current source pool is [dataset/audit_givens/selection.jsonl](../dataset/audit_givens/selection.jsonl). Production and curation artifacts live under `dataset/synthetic/`. [Dataset conventions](../dataset/CONVENTIONS.md) define batching, lineage, checkpoint recovery, image bindings and Parquet export.
+
+A candidate carries its task input, `target_tikz`, `id` and `source`. The source reference resolves to the original problem in the source ledger. The ledger owns the problem text, locator and links between duplicate presentations; the sample does not repeat them.
+
+Split preparation groups all samples from the same original problem, linked Generate/Edit pairs and duplicate diagrams. Freeze those assignments in the split file. Training exports contain only the task input, target and row identity; source lookup and split evidence remain outside model input.
+
+Authoring requests, execution traces, compile artifacts and review decisions belong to their respective process records.
+
+## Quality and evaluation
+
+A useful sample has an unambiguous task input, a mathematically aligned target and readable geometry. Compilation establishes that the code runs. Source and image review establish that it represents the requested configuration.
+
+| Dimension | What is assessed |
 | --- | --- |
-| `task` | Generate, Edit hoặc Reconstruct |
-| `grade` | Lớp của nội dung nguồn |
-| `diagram_types` | Một hoặc nhiều mã loại hình trong taxonomy Hình học hoặc Đại số |
-| `source_kind` | Ví dụ, luyện tập hoặc bài tập, khi mẫu có nguồn bài tương ứng |
-| `book_role` | SGK, SGV hoặc sách chuyên đề |
-| `source_id` | Liên kết đến hình/bài nguồn, dùng nhóm các mẫu cùng nguồn |
+| Compile | The TikZ source validates and compiles. |
+| Mathematical correctness | Observed geometric relations and marked requirements hold. |
+| Content coverage | Required objects, connections, curves, labels and relation marks are present. |
+| Visual readability | Labels, strokes and objects can be distinguished and associated correctly. |
 
-### Mở rộng dữ liệu
+Offline scoring compares `target_tikz` and `output_tikz`. Supported observations, score availability and batch evaluation are defined in [evaluation.md](evaluation.md). Source/input fidelity remains part of target curation.
 
-- geometry-specific samples từ các TikZ dataset công khai như: [GeoTikz-Base](https://huggingface.co/datasets/SJY-1995/GeoTikz-Base)(2.45M image-to-TikZ, phục vụ Recontruct), [GeoTikz-Instruct](https://huggingface.co/datasets/SJY-1995/GeoTikz-Instruct)(421K instruction-based image-to-TikZ, phục vụ Edit), [DaEdiTikZ](https://huggingface.co/datasets/nllg/DaEdiTikZ)(106k realistic scientific-figure editing trajectories for TikZ, phục vụ Edit). Tuy nhiên việc các dataset tập trung nhiều vào scientific figures hơn là mathematical diagrams nên cần phải lọc kĩ dữ liệu trước hoặc dành cho bước cải thiện đọc cấu trúc hình và viết TikZ cho baseline model thay vì tập trung vào 3 tasks chính mình đang kì vọng.
-- synthetic examples sinh từ predefined geometric constraints: Từ TikZ code có được ở task Recontruct để phục vụ sinh ra các yêu cầu cho Generate và Edit
+## Training and inference
 
-## 5. Evaluation
+Training uses the task-specific sample input and the exact target response. Inference uses the same system instruction and sample input. Export predictions with their references and row identities for offline scoring.
 
-Cả ba task đều được đánh giá trên `output_tikz` bằng cách so sánh với `target_tikz`, theo cùng các tiêu chí:
-
-| Tiêu chí chung | Nội dung đánh giá | Phạm vi và căn cứ kiểm tra |
-| --- | --- | --- |
-| **Compile rate** | TikZ biên dịch thành công |  |
-| **Mathematical correctness** | Tọa độ, số đo, quan hệ hình học, miền, nhánh, dấu và chiều biến thiên | Kiểm tra các thành phần đã có thỏa điều kiện toán học tương ứng trong instruction/target và nhất quán với ký hiệu trên hình. Ví dụ, đường cao đã vẽ nhưng không vuông góc với đáy là lỗi correctness. |
-| **Content coverage** | Chọn và biểu diễn đủ thông tin cần truyền đạt, tránh thiếu dữ kiện hoặc thêm nội dung ngoài phạm vi | Từ tập dữ kiện ứng viên, xác định phần cần truyền đạt theo instruction/target và kiểm tra phần đó đã có trong hình hay chưa. Ví dụ, thiếu đường cao được yêu cầu là lỗi coverage. Một dữ kiện có thể được truyền đạt qua cấu hình, nét, nhãn hoặc dấu. Số dữ kiện cần thể hiện không đồng nhất với số ký hiệu phải vẽ. |
-| **Visual readability** | Bố cục, tỉ lệ và khả năng phân biệt các thành phần | Các thành phần đã chọn có rõ, dễ đọc, dễ liên hệ với đúng đối tượng và tránh chồng lấn hay không. Yêu cầu cụ thể về bố cục hoặc vị trí được đối chiếu thêm với instruction/target. |
-
-## References
-
-[1] Belouadi, J., Lauscher, A., & Eger, S. **AutomaTikZ: Text-Guided Synthesis of Scientific Vector Graphics with TikZ.** ICLR 2024.
-
-[https://arxiv.org/abs/2310.00367](https://arxiv.org/abs/2310.00367)
-
-[2] Sun, J. et al. **GeoTikzBridge: Advancing Multimodal Code Generation for Geometric Perception and Reasoning.** 2026.
-
-[https://arxiv.org/abs/2603.22687](https://arxiv.org/abs/2603.22687)
-
-[3] Greisinger, C., & Eger, S. **TikZilla: Scaling Text-to-TikZ with High-Quality Data and Reinforcement Learning.** ICLR 2026.
-
-[https://arxiv.org/abs/2603.03072](https://arxiv.org/abs/2603.03072)
-
-[4] Wang, J. et al. **MagicGeo: Training-Free Text-Guided Geometric Diagram Generation.** 2025.
-
-[https://arxiv.org/abs/2502.13855](https://arxiv.org/abs/2502.13855)
-
-[5] Wei, X. et al. **GeoLoom: High-quality Geometric Diagram Generation from Textual Input.** 2025.
-
-[https://arxiv.org/abs/2512.08180](https://arxiv.org/abs/2512.08180)
-
-[6] Kumar, V. et al. **DiagramIR: An Automatic Pipeline for Educational Math Diagram Evaluation.** 2025.
-
-[https://arxiv.org/abs/2511.08283](https://arxiv.org/abs/2511.08283)
+Notebook input contracts, saved adapters and prediction export are documented in [train/README.md](../train/README.md). Validation supports iteration; test is reserved for the final checkpoint.

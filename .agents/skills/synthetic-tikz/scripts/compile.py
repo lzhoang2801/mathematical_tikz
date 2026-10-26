@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[4]
-MATHPAPER = ROOT.parent / "mathmath"
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(MATHPAPER / "src"))
+sys.path.insert(0, str(ROOT / "src"))
 
 import httpx
 from agent.latex import tikz as wrapper
@@ -125,7 +124,7 @@ def compile_batch(input_path: Path, output: Path, compiler: httpx.Client,
     snapshots = []
     for item in profile["files"]:
         source = Path(item["path"])
-        snapshot = output / "harness" / source.relative_to(MATHPAPER)
+        snapshot = output / "harness" / source.relative_to(ROOT)
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         snapshot.write_bytes(source.read_bytes())
         snapshots.append({**item, "snapshot_path": str(snapshot)})

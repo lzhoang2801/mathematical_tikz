@@ -27,7 +27,8 @@ def test_cli_preview_reuses_the_compiled_pair(tmp_path, monkeypatch, capsys):
     output.write_text('output code', encoding='utf-8')
     events = []
     @contextmanager
-    def observe_pair(first, second):
+    def observe_pair(first, second, **options):
+        assert options["preview"]
         events.append((first, second))
         yield {'compile_success': True}, {'compile_success': False}
         assert preview.is_file()
@@ -47,3 +48,24 @@ def test_cli_preview_reuses_the_compiled_pair(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         run.main()
     assert output.read_text(encoding='utf-8') == 'output code'
+
+def test_preview_and_known_scores_survive_unsupported_reference(tmp_path, monkeypatch, capsys):
+    from evaluation.evaluator import EvaluationError
+    target, output, preview = tmp_path/'target.tex',tmp_path/'output.tex',tmp_path/'preview.html'
+    target.write_text('target code')
+    output.write_text('output code')
+    partial = {'compile':1,'mathematical_correctness':None,'content_coverage':None,'visual_readability':100.0}
+    @contextmanager
+    def observed(*args, **kwargs):
+        yield {'compile_success':True},{'compile_success':True}
+        assert preview.is_file()
+    monkeypatch.setattr(run,'_observe_pair',observed)
+    monkeypatch.setattr(run,'_score_observations',Mock(side_effect=EvaluationError('Unsupported <curve>',partial)))
+    monkeypatch.setattr('sys.argv',['evaluation.run','--target',str(target),'--output',str(output),'--preview',str(preview)])
+    with pytest.raises(SystemExit) as failure:
+        run.main()
+    assert failure.value.code == 1
+    assert json.loads(capsys.readouterr().out) == {'scores':partial,'error':'Unsupported <curve>'}
+    document = preview.read_text()
+    assert 'Unsupported &lt;curve&gt;' in document and 'Unavailable' in document
+    assert 'target code' in document and 'output code' in document

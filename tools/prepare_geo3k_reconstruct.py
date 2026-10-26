@@ -94,8 +94,6 @@ def unique_candidates(
             "source_group": (f"geo3k-image:{original_image_hash}" if original_image_hash
                              else f"geo3k-code:{target_hash}"),
             "split": None,
-            "grade": None,
-            "diagram_types": None,
             "evaluation_rubric": None,
             "provenance": {
                 **origin,

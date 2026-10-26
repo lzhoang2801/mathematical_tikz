@@ -1,0 +1,43 @@
+{
+  "upstream_commit": "033d888db52a54a73c1e4d63c659a3d942296b6f",
+  "source_state": "working-tree",
+  "copied_on": "2026-10-21",
+  "files": {
+    "agent/workflows/tikz.py": "da9d9d117904f2b224f99d2c0aa03db93fe13ccea6e8dee79e1c756cccf0948c",
+    "agent/workflows/problem_tikz.py": "53e91f7088582a7d2db6b16a6e4e88522617e93353d1d78e994536b84df41730",
+    "agent/workflows/geometry_tikz.py": "ba0003b158977abd4aa58072a1537d6311b8586d3360b843126e938f4295a000",
+    "agent/prompts/tikz.py": "2937f734fcd592e6a919cc50c9b4edc239d7a61dd838e2caa8149794cf9aa5fd",
+    "agent/prompts/problem_tikz.py": "153cd0e6c5de6679e2c7a9451f0a2f64a49fbc80b430230c28df3909753622bb",
+    "agent/prompts/geometry_tikz.py": "ff0b6fd9820169c59d76182a2de64f0e88cd2aa50c4386a6aaedc2c46d88cb58",
+    "agent/schemas/tikz.py": "3160d827d1bda37543793905548f477ddc6d95e608916c6c3969471106cf89f1",
+    "agent/latex/tikz.py": "ae6990d1be9b27c17728abefe9bed3aba2ae3aead5fc79c49b608ec791ebc686",
+    "agent/latex/_tex.py": "56c77f1fba3fefc632a9364e1aa4261da32807cc56b6897d2b25e0d6784b9d28",
+    "agent/utils/media.py": "c222029a1dd35e7c5530cb3bacbd835d561af01cbdce3c1687a7636e48506057",
+    "agent/middleware.py": "c23e6f8696694a6f707147fb69670d433e8245467af2d2c41ba85476f328da23",
+    "latex_compiler/__init__.py": "cbacc3bd58d3ccc03beea2ddf1a879684e68f7c88bf2e090885019edee67651c",
+    "latex_compiler/client.py": "a78fd7c9528f295737020ec99f5cfc9709b435a1a475f455a3557d65eb7cf7a3",
+    "latex_compiler/schemas.py": "5920815fefd8efd1d88cf1b6fa04c80563f03c4e2781540974019b9ac30756ae",
+    "latex_compiler/worker.py": "952e718dfc6e079cd8f8ff3d47f041c9020a968a7de2cb965ce3908db9765ff2"
+  },
+  "source_paths": {
+    "agent/workflows/tikz.py": "src/agent/workflows/tikz.py",
+    "agent/workflows/problem_tikz.py": "src/agent/workflows/problem_tikz.py",
+    "agent/workflows/geometry_tikz.py": "src/agent/workflows/geometry_tikz.py",
+    "agent/prompts/tikz.py": "src/agent/prompts/tikz.py",
+    "agent/prompts/problem_tikz.py": "src/agent/prompts/problem_tikz.py",
+    "agent/prompts/geometry_tikz.py": "src/agent/prompts/geometry_tikz.py",
+    "agent/schemas/tikz.py": "src/agent/schemas/tikz.py",
+    "agent/latex/tikz.py": "src/agent/latex/tikz.py",
+    "agent/latex/_tex.py": "src/agent/latex/_tex.py",
+    "agent/utils/media.py": "src/agent/utils/media.py",
+    "agent/middleware.py": "src/agent/middleware.py",
+    "latex_compiler/__init__.py": "src/compiler/src/latex_compiler/__init__.py",
+    "latex_compiler/client.py": "src/compiler/src/latex_compiler/client.py",
+    "latex_compiler/schemas.py": "src/compiler/src/latex_compiler/schemas.py",
+    "latex_compiler/worker.py": "src/compiler/src/latex_compiler/worker.py"
+  },
+  "scope": "Native Generate/Edit/Reconstruct drawing closure and compiler HTTP client/worker, copied byte-for-byte. Agent package initializers remain inert.",
+  "file_copied_on": {
+    "latex_compiler/worker.py": "2026-10-26"
+  }
+}

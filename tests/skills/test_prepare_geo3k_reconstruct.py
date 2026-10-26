@@ -31,7 +31,7 @@ def test_only_calc_preamble_is_removed_and_duplicate_origins_are_preserved():
     assert first["provenance"]["upstream_original_image_sha256"] == "source-image-a"
     assert first["provenance"]["duplicate_origins"][0]["upstream_split"] == "validation"
     assert first["source_group"] == "geo3k-image:source-image-a"
-    assert all(row["instruction"] is None and row["grade"] is None and row["diagram_types"] is None
+    assert all(row["instruction"] is None and "grade" not in row and "diagram_types" not in row
                for row in candidates)
 
 

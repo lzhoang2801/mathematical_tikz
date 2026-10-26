@@ -1,135 +1,85 @@
-import xml.etree.ElementTree as ET
-
-import pymupdf
+"""PGF paint/text-box clearance, intentionally distinct from glyph-ink overlap."""
 import pytest
-from shapely.geometry import LineString, box
 
-from evaluation.tikz_readability import (
-    attach_glyph_ink,
-    inspect_readability,
-    extract_glyph_outlines,
-    glyph_ink,
-)
+from evaluation.tikz_observations import read_scene
+from evaluation.tikz_readability import inspect_readability
+from conftest import label_records
 
 
-def test_font_outline_distinguishes_open_c_aperture_from_ink_stem():
-    with pymupdf.open() as document:
-        page = document.new_page(width=250, height=180)
-        page.insert_text((113.222, 41.095), "C H", fontsize=7.9701)
-
-        result = extract_glyph_outlines(page)
-
-    assert result["status"] == "ok", result
-    assert [glyph["text"] for glyph in result["glyphs"]] == ["C", "H"]
-    glyph = result["glyphs"][0]
-    label = {
-        "size": 7.9701,
-        "glyphs": [{"text": glyph["text"], "bbox": glyph["bbox_pt"]}],
-    }
-    assert attach_glyph_ink([label], result) == []
-    assert label["glyphs"][0]["evidence_id"] == glyph["evidence_id"]
-    ink = glyph_ink(glyph["drawings"])
-    outline = glyph["drawings"][0]["rect"]
-    y = (outline.y0 + outline.y1) / 2
-
-    aperture = LineString([(outline.x1 - 0.8, y), (outline.x1 + 0.2, y)])
-    assert aperture.intersection(box(*glyph["bbox_pt"])).length > 0.8
-    assert aperture.intersection(ink).length == pytest.approx(0.0, abs=1e-6)
-
-    stem = LineString([(outline.x0 + 0.4, y), (outline.x0 + 1.4, y)])
-    assert stem.intersection(ink).length > 0.1
+def status(observation):
+    return [row['status'] for row in inspect_readability(read_scene(observation))['labels']]
 
 
-def test_extract_glyph_outlines_uses_supplied_page_char_records():
-    with pymupdf.open() as document:
-        page = document.new_page(width=100, height=80)
-        page.insert_text((20, 30), "A", fontsize=10)
-
-        result = extract_glyph_outlines(page, [{"c": "Z", "bbox": [10, 10, 20, 20]}])
-
-    assert result["status"] == "unknown"
-    assert result["reason"] == "SVG glyph order does not match PDF text extraction order"
-
-
-def test_output_readability_retains_actual_collision_evidence():
-    from shapely.geometry import LineString, box
-
-    text = [{
-        "text": "A",
-        "bbox": [4, 4, 6, 6],
-        "glyphs": [
-            {
-                "text": "A",
-                "bbox": [4, 4, 6, 6],
-                "ink": box(4, 4, 6, 6),
-                "evidence_id": "glyph:A",
-            }
-        ],
-    }]
-    target = {"strokes": [], "text": text, "bounds": [0, 0, 10, 10], "ink_issues": []}
-    output = {
-        **target,
-        "strokes": [{"geometry": LineString([(0, 5), (10, 5)]), "width": 0.5}],
-    }
-
-    result = inspect_readability(output)
-
-    assert result["labels"][0]["status"] == "fail"
-    issue = result["labels"][0]["issues"][0]
-    assert issue == {"kind": "stroke_collision", "area_pdf_pt2": 1.0, "basis": "font_outline"}
-    assert inspect_readability(target)["labels"][0]["status"] == "pass"
+@pytest.mark.parametrize('dash,expected',[('', 'fail'),('3pt,3pt','pass')])
+def test_dash_gaps_affect_readability_not_continuous_carriers(pgf_records,dash,expected):
+    rows=label_records(1,'A',(0,0),box_point=(3.2,-3))
+    # Narrow label wholly inside the [3,6] gap, with a six-pt height.
+    rows[-1]='TEXTBOX|1|3.2pt|3pt|5.8pt|3pt|3.2pt|-3pt|5.8pt|-3pt'
+    rows += [f'setdash|{dash}|0pt','moveto|0pt|0pt','lineto|20pt|0pt','stroke']
+    obs=pgf_records(rows)
+    assert status(obs)==[expected]
+    assert read_scene(obs)['strokes'][0]['geometry'].length==20
 
 
-def test_nonspace_glyphs_still_match_when_svg_omits_inferred_spaces(monkeypatch):
-    original = pymupdf.Page.get_svg_image
-
-    def omit_space_uses(page, *args, **kwargs):
-        source = original(page, *args, **kwargs)
-        root = ET.fromstring(source)
-        parents = {child: parent for parent in root.iter() for child in list(parent)}
-        for use in [node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "use"]:
-            if (use.get("data-text") or "").isspace():
-                parents[use].remove(use)
-        return ET.tostring(root, encoding="unicode")
-
-    monkeypatch.setattr(pymupdf.Page, "get_svg_image", omit_space_uses)
-    with pymupdf.open() as document:
-        page = document.new_page(width=250, height=180)
-        page.insert_text((30, 60), "6 cmx8 cmOAB", fontsize=10)
-
-        result = extract_glyph_outlines(page)
-
-    assert result["status"] == "ok", result
-    assert "".join(glyph["text"] for glyph in result["glyphs"]) == "6cmx8cmOAB"
+@pytest.mark.parametrize('operation', ['stroke','fill'])
+def test_transparent_paint_does_not_collide(pgf_records,operation):
+    rows=label_records(1,'A',(0,0),box_point=(0,0))
+    rows += ['stroke@opacity|0','fill@opacity|0','rect|0pt|0pt|10pt|10pt',operation]
+    assert status(pgf_records(rows))==['pass']
 
 
-def test_unresolved_outlines_cannot_earn_credit_and_overlaps_count_each_label_once():
-    from shapely.geometry import LineString, box
-    label = {"text": "A", "bbox": [4, 4, 6, 6], "glyphs": [{"text": "A", "bbox": [4, 4, 6, 6], "ink": box(4, 4, 6, 6)}]}
-    scene = {"text": [label, label], "strokes": [{"geometry": LineString([(0, 5), (10, 5)]), "width": 0.5}],
-             "bounds": [0, 0, 10, 10], "ink_issues": []}
-    measured = inspect_readability(scene)
-    assert [row["status"] for row in measured["labels"]] == ["fail", "fail"]
-    assert len(measured["labels"][0]["issues"]) == 2
-    scene["text"] = [{"text": "A", "bbox": [4, 4, 6, 6], "glyphs": []}]
-    assert inspect_readability(scene)["labels"][0]["status"] == "unknown"
+def test_label_ownership_excludes_own_background_but_not_other_paint(pgf_records):
+    rows=label_records(1,'A',(0,0),box_point=(0,0))
+    path=['rect|0pt|0pt|10pt|10pt','fill']
+    assert status(pgf_records(rows+['NODE_BEGIN|box|1',*path,'NODE_END']))==['pass']
+    assert status(pgf_records(rows+path))==['fail']
 
 
-def test_d_outline_with_tiny_self_intersection_preserves_its_hole():
-    import json
-    from pathlib import Path
-    from shapely.geometry import Point
-    drawings = json.loads((Path(__file__).parent / "fixtures/readability-d-glyph.json").read_text())
-    ink = glyph_ink(drawings)
-    assert ink.is_valid and 8 < ink.area < 10
-    assert ink.covers(Point(60.5, 221))
-    assert not ink.covers(Point(62, 221))
+def test_clip_limits_paint_and_partially_clipped_text_fails(pgf_records):
+    clip=['rect|0pt|0pt|2pt|10pt','clipnext','discardpath']
+    label=label_records(1,'A',(0,0),box_point=(4,0))
+    assert status(pgf_records(label+clip+['rect|0pt|0pt|10pt|10pt','fill']))==['pass']
+    partial=label_records(1,'A',(0,0),box_point=(0,0))
+    assert status(pgf_records(clip+partial))==['fail']
 
 
-def test_equality_marks_are_not_readability_labels():
-    labels = [{"text": text, "bbox": [4, 4, 6, 6],
-               "glyphs": [{"text": text, "ink": box(4, 4, 6, 6)}]}
-              for text in ("|", "||", "|||", "K", "|AB|")]
-    result = inspect_readability({"text": labels, "strokes": [], "bounds": [0, 0, 10, 10], "ink_issues": []})
-    assert [row["text"] for row in result["labels"]] == ["K", "|AB|"]
-    assert all(row["status"] == "fail" for row in result["labels"])
+def test_overlapping_text_and_unknown_boxes(pgf_records):
+    first=label_records(1,'A',(0,0))
+    assert status(pgf_records(first+label_records(2,'B',(0,0))))==['fail','fail']
+    assert status(pgf_records(label_records(1,'A',(0,0),visible=False)))==['unknown']
+
+
+def test_round_zero_length_dashes_have_visible_support(pgf_records):
+    rows=label_records(1,'A',(0,0),box_point=(-.2,-.2))
+    rows += ['setlinewidth|2pt','roundcap','setdash|0pt,3pt|0pt','moveto|0pt|0pt','lineto|20pt|0pt','stroke']
+    assert status(pgf_records(rows))==['fail']
+
+
+def test_short_thin_strokes_and_hairlines_are_not_silently_dropped(pgf_records):
+    label=label_records(1,'A',(0,0),box_point=(0,0))
+    line=['moveto|0pt|3pt','lineto|4pt|3pt','stroke']
+    assert status(pgf_records(label+['setlinewidth|.01pt']+line))==['fail']
+    assert status(pgf_records(label+['setlinewidth|0pt']+line))==['unknown']
+
+
+def test_even_odd_hole_and_canvas_scaling(pgf_records):
+    label=label_records(1,'A',(0,0),box_point=(4,4))
+    fill=['FILL_RULE|even_odd','rect|0pt|0pt|20pt|20pt','rect|2pt|2pt|10pt|10pt','fill']
+    assert status(pgf_records(label+fill))==['pass']
+    assert status(pgf_records(['beginscope','transformcm|2|0|0|3|0pt|0pt',*label,*fill,'endscope']))==['pass']
+
+
+@pytest.mark.parametrize('order,opacity,expected', [('before',1,'pass'),('after',1,'fail'),('after',0,'pass'),('after',.5,'fail')])
+def test_fill_order_and_opacity_determine_text_overpaint(pgf_records,order,opacity,expected):
+    label=label_records(1,'A',(0,0),box_point=(0,0))
+    fill=[f'fill@opacity|{opacity}','rect|-1pt|-1pt|10pt|10pt','fill']
+    rows=fill+label if order=='before' else label+fill
+    assert status(pgf_records(rows))==[expected]
+
+
+@pytest.mark.parametrize('opacity,expected', [(1,'pass'),(.5,'fail')])
+def test_background_mask_hides_earlier_strokes_before_text(pgf_records,opacity,expected):
+    stroke=['moveto|0pt|3pt','lineto|4pt|3pt','stroke']
+    mask=[f'fill@opacity|{opacity}','rect|-1pt|-1pt|10pt|10pt','fill','fill@opacity|1']
+    label=label_records(1,'A',(0,0),box_point=(0,0))
+    assert status(pgf_records(stroke+mask+label))==[expected]

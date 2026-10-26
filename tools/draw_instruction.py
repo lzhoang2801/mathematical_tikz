@@ -1,4 +1,4 @@
-"""Draw with MathPaper, save live Parquet snapshots and export reviewed pairs."""
+"""Draw with the local native harness, save snapshots and export reviewed pairs."""
 from __future__ import annotations
 
 import argparse
@@ -12,16 +12,15 @@ from contextlib import contextmanager
 from importlib.metadata import version
 from io import BytesIO
 from pathlib import Path
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
 from time import perf_counter, sleep
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-MATHPAPER = ROOT.parent / "mathmath"
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(MATHPAPER / "src"))
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.append(str(ROOT / ".venv/Lib/site-packages"))
 
 import httpx
@@ -52,6 +51,12 @@ def review_digest(row: dict) -> str:
               "source", "source_group", "provenance", "grade", "diagram_types")
     image = target_image(row)
     payload = {key: row.get(key) for key in fields}
+    if row.get("review_evidence") is not None:
+        payload["review_evidence"] = row["review_evidence"]
+    if row.get('current_render') is not None:
+        payload['current_render'] = row['current_render']
+        current = target_image({**row['current_render'], 'target_tikz': row.get('current_tikz')})
+        payload['current_image_sha256'] = hashlib.sha256(current['bytes']).hexdigest() if current else None
     payload["tikz_image_sha256"] = hashlib.sha256(image["bytes"]).hexdigest() if image else None
     if row.get("task") == "Reconstruct":
         source = source_image(row)
@@ -68,7 +73,7 @@ def load_rows(path: Path) -> list[dict]:
         if row["id"] in seen or row.get("task") not in ("Generate", "Edit", "Reconstruct"):
             raise ValueError(f"{row['id']}: duplicate ID or invalid task")
         seen.add(row["id"])
-        if row["task"] != "Reconstruct" or row.get("instruction") is not None:
+        if row["task"] != "Reconstruct":
             validate_instruction(row.get("instruction"))
         split = row.get("split")
         if split not in (None, "train", "validation", "test"):
@@ -200,11 +205,9 @@ def write_parquet(rows: list[dict], path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    fields = ("schema_version", "id", "task", "instruction", "current_tikz", "target_tikz", "source", "source_group", "split",
-              "grade", "diagram_types")
-    schema = pa.schema([(k, pa.string()) for k in fields[:-2]] +
-                       [("grade", pa.int64()), ("diagram_types", pa.list_(pa.string())),
-                        ("evaluation_rubric", pa.string()), ("metadata", pa.string()),
+    fields = ("schema_version", "id", "task", "instruction", "current_tikz", "target_tikz", "source", "source_group", "split")
+    schema = pa.schema([(k, pa.string()) for k in fields] +
+                       [("evaluation_rubric", pa.string()), ("metadata", pa.string()),
                          ("tikz_image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])),
                          ("image", pa.struct([("bytes", pa.binary()), ("path", pa.string())]))],
                        metadata={"huggingface": encoded({"info": {"features": {
@@ -307,31 +310,60 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
     (session / "inputs.jsonl").write_bytes(inputs)
     profile = []
     modules = ("agent.prompts.tikz", "agent.prompts.problem_tikz", "agent.latex.tikz",
-               "agent.workflows.problem_tikz", "agent.workflows.tikz", "agent.schemas.tikz")
+               "agent.workflows.problem_tikz", "agent.workflows.tikz", "agent.schemas.tikz",
+               "agent.middleware")
     paths = [Path(sys.modules[name].__file__) for name in modules] + [ROOT / "tools/cpa.py", Path(__file__)]
     for path in paths:
         data = path.read_bytes()
-        snapshot = session / "harness" / path.relative_to(MATHPAPER if path.is_relative_to(MATHPAPER) else ROOT)
+        snapshot = session / "harness" / path.relative_to(ROOT)
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         snapshot.write_bytes(data)
         profile.append({"path": str(path), "sha256": hashlib.sha256(data).hexdigest()})
-    report = {**(run_metadata or {}), "rows": len(rows), "workers": workers,
-              "pending_rows": len(pending), "skipped_rows": len(outcomes), "session_dir": str(session),
+    report = {**(run_metadata or {}), "rows": len(rows), "workers": workers, "pending_rows": len(pending),
+              "skipped_rows": len(outcomes), "session_dir": str(session),
               "langsmith_project": project, "harness_files": profile,
               "tikz_prompt_version": sys.modules["agent.prompts.tikz"].TIKZ_PROMPT_VERSION,
               "task_prompt_version": sys.modules["agent.prompts.problem_tikz"].PROBLEM_TIKZ_PROMPT_VERSION,
-              "input_sha256": hashlib.sha256(inputs).hexdigest()}
+              "input_sha256": hashlib.sha256(inputs).hexdigest(),
+              "candidate_snapshot_count": 0, "candidate_snapshot_wall_seconds": 0.0,
+              "checkpointed_rows": 0, "row_checkpoint_wall_seconds": 0.0,
+              "row_checkpoint_wall_seconds_by_id": {}}
     save_json(session / "report.json", report)
     save_json(output / "report.json", report)
     if not pending:
         report["max_model_calls_total"] = 0
+
+    snapshot_count, snapshot_seconds, last_snapshot = 0, 0.0, 0.0
+    checkpoint_seconds_by_id: dict[str, float] = {}
+    checkpoint_lock = Lock()
+
+    def publish_snapshot() -> None:
+        nonlocal snapshot_count, snapshot_seconds, last_snapshot
+        snapshot_started = perf_counter()
+        save_candidates(output, latest)
+        snapshot_seconds += perf_counter() - snapshot_started
+        snapshot_count += 1
+        last_snapshot = perf_counter()
+        with checkpoint_lock:
+            checkpoint_times = dict(checkpoint_seconds_by_id)
+        report.update(candidate_snapshot_count=snapshot_count,
+                      candidate_snapshot_wall_seconds=round(snapshot_seconds, 6),
+                      checkpointed_rows=len(checkpoint_times),
+                      row_checkpoint_wall_seconds=round(sum(checkpoint_times.values()), 6),
+                      row_checkpoint_wall_seconds_by_id=checkpoint_times,
+                      rows_completed=len(outcomes),
+                      counts=dict(Counter(row.get("drawing_status") for row in outcomes.values())),
+                      successful_new_drawings=sum(outcomes.get(row_id, {}).get("success") is True
+                                                   for row_id in (row["id"] for row in pending)))
+        save_json(session / "report.json", report)
+        save_json(output / "report.json", report)
 
     def draw_one(row: dict) -> dict:
         record = {**row, "current_tikz": row.get("current_tikz"), "target_tikz": "",
                   "success": False, "rendered_png_path": None, "unresolved_issues": [],
                   "rendered_tikz_sha256": None, "rendered_png_sha256": None,
                   "verification": {"status": "candidate", "reviewed_by": None}}
-        trace_id, started = uuid4(), perf_counter()
+        trace_id, row_started = uuid4(), perf_counter()
         case = output / "cases" / hashlib.sha256(row["id"].encode("utf-8")).hexdigest()
         # Keep native UUID/render subdirectories below Windows' path-length limit.
         directory = output / "artifacts" / trace_id.hex
@@ -359,25 +391,34 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
             record.update(success=False, drawing_status="failed", rendered_png_path=None,
                           rendered_tikz_sha256=None, rendered_png_sha256=None,
                           unresolved_issues=[f"{type(error).__name__}: {error}"])
-        record["elapsed_seconds"] = round(perf_counter() - started, 3)
+        record["elapsed_seconds"] = round(perf_counter() - row_started, 3)
+        checkpoint_started = perf_counter()
         save_json(directory / "candidate.json", record)
         save_json(case / "candidate.json", record)
+        with checkpoint_lock:
+            checkpoint_seconds_by_id[row["id"]] = round(perf_counter() - checkpoint_started, 6)
         return record
 
     for record in outcomes.values():
         case = output / "cases" / hashlib.sha256(record["id"].encode("utf-8")).hexdigest()
+        checkpoint_started = perf_counter()
         save_json(case / "candidate.json", record)
+        with checkpoint_lock:
+            checkpoint_seconds_by_id[record["id"]] = round(perf_counter() - checkpoint_started, 6)
         print(encoded({"id": record["id"], "drawing_status": "skipped_existing_target"}), flush=True)
     latest.update(outcomes)
-    save_candidates(output, latest)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        jobs = [pool.submit(draw_one, row) for row in pending]
-        for job in as_completed(jobs):
-            record = job.result()
-            outcomes[record["id"]] = record
-            latest[record["id"]] = record
-            save_candidates(output, latest)
-            print(encoded({"id": record["id"], "drawing_status": record["drawing_status"]}), flush=True)
+    if pending:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            jobs = [pool.submit(draw_one, row) for row in pending]
+            for job in as_completed(jobs):
+                record = job.result()
+                outcomes[record["id"]] = record
+                latest[record["id"]] = record
+                if snapshot_count == 0 or perf_counter() - last_snapshot >= 30:
+                    publish_snapshot()
+                print(encoded({"id": record["id"], "drawing_status": record["drawing_status"]}), flush=True)
+    # Per-ID checkpoints stay atomic; aggregate JSONL/Parquet snapshots can be coalesced.
+    publish_snapshot()
     report["counts"] = dict(Counter(row["drawing_status"] for row in outcomes.values()))
     report["elapsed_seconds"] = round(perf_counter() - started, 3)
     report["successful_new_drawings"] = sum(outcomes[row["id"]].get("success") is True for row in pending)
@@ -387,34 +428,54 @@ def draw_batch(rows: list[dict], output: Path, *, agent, compiler_http: httpx.Cl
     return [outcomes[row["id"]] for row in rows]
 
 
+def validate_ready_pair(row: dict) -> None:
+    """Validate recorded independent acceptance, never infer it from compilation."""
+    validate_tikz(row.get("target_tikz", ""))
+    review = row.get("verification", {})
+    if (not isinstance(review, dict) or review.get("status") != "ready"
+            or not isinstance(review.get("reviewed_by"), str) or not review["reviewed_by"].strip()
+            or review.get("reviewed_input_sha256") != review_digest(row)):
+        raise ValueError(f"{row['id']}: missing review or changed instruction/target/rubric")
+    if target_image(row) is None:
+        raise ValueError(f"{row['id']}: a verified PNG for this exact target_tikz is required")
+    if row.get("task") in ("Generate", "Edit"):
+        evidence = row.get("review_evidence")
+        required = ("source", "instruction", "mathematics", "content", "readability")
+        if row["task"] == "Edit":
+            current_code = row.get("current_tikz")
+            if not isinstance(current_code, str) or not current_code.strip() or current_code == row.get("target_tikz"):
+                raise ValueError(f"{row['id']}: Edit needs an actual changed starting/ending pair")
+            validate_tikz(current_code)
+            required += ("edit_change", "edit_preservation")
+            current = row.get("current_render")
+            if not isinstance(current, dict) or target_image({**current, "target_tikz": row.get("current_tikz")}) is None:
+                raise ValueError(f"{row['id']}: Edit review needs the exact starting PNG/code binding")
+        if (review.get("method") != "independent_source_render_review"
+                or not isinstance(evidence, dict) or evidence.get("unresolved") != []
+                or any(not isinstance(evidence.get(key), str) or not evidence[key].strip() for key in required)):
+            raise ValueError(f"{row['id']}: independent source/render review evidence is missing or unresolved")
+
+
 def export_rows(rows: list[dict], output: Path) -> dict:
     """Export reviewed pairs only; never infer readiness from drawing completion."""
     seen, lineage_splits = set(), {}
     for row in rows:
         if row.get("task") not in ("Generate", "Edit", "Reconstruct"):
             raise ValueError(f"{row['id']}: unknown task")
-        if row["task"] != "Reconstruct" or row.get("instruction") is not None:
+        if row["task"] != "Reconstruct":
             validate_instruction(row.get("instruction"))
-        review = row.get("verification", {})
-        if (not isinstance(review, dict) or review.get("status") != "ready"
-                or not isinstance(review.get("reviewed_by"), str) or not review["reviewed_by"].strip()
-                or review.get("reviewed_input_sha256") != review_digest(row)):
-            raise ValueError(f"{row['id']}: missing review or changed instruction/target/rubric")
+        validate_ready_pair(row)
         if row.get("split") not in (None, "train", "validation", "test"):
             raise ValueError(f"{row['id']}: invalid split")
         parents = (row.get("provenance") or {}).get("parents", [])
         if not isinstance(parents, list) or any(not isinstance(parent, str) or not parent.strip() for parent in parents):
             raise ValueError(f"{row['id']}: invalid original parents")
-        for key in [("family", row.get("source_group")), *(("parent", parent) for parent in parents)]:
+        for key in [("source", row.get("source")), ("family", row.get("source_group")), *(("parent", parent) for parent in parents)]:
             if key[1] is None or row.get("split") is None:
                 continue
             if key in lineage_splits and lineage_splits[key] != row["split"]:
                 raise ValueError(f"{key[1]}: conflicting lineage splits")
             lineage_splits[key] = row["split"]
-        grade, types = row.get("grade"), row.get("diagram_types")
-        if (grade is not None and (type(grade) is not int or not 6 <= grade <= 12)
-                or types is not None and (not isinstance(types, list) or any(not isinstance(code, str) for code in types))):
-            raise ValueError(f"{row['id']}: invalid grade or diagram_types")
         if not isinstance(row.get("target_tikz"), str) or not row["target_tikz"].strip():
             raise ValueError(f"{row['id']}: complete target_tikz required")
         validate_tikz(row["target_tikz"])

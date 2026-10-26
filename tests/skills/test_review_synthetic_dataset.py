@@ -234,6 +234,54 @@ def test_previews_require_exact_edit_base_and_target_image_bindings(tmp_path):
     mismatched_target = {**edit, "rendered_tikz_sha256": hashlib.sha256(base_tikz.encode()).hexdigest()}
     assert review.preview(mismatched_target, before=False) is None
 
+    direct = {**edit, 'provenance': {}, 'current_render': {
+        key: base[key] for key in ('rendered_tikz_sha256', 'rendered_png_path', 'rendered_png_sha256')}}
+    assert review.preview(direct, before=True)['bytes'] == base_png.read_bytes()
+    assert review.preview({**direct, 'current_tikz': target_tikz}, before=True) is None
+    digest = reviewer.drawing.review_digest(direct)
+    base_png.unlink()
+    assert review.preview(direct, before=True) is None
+    assert reviewer.drawing.review_digest(direct) != digest
+
+
+def test_review_rejects_changed_compact_source_registry(tmp_path):
+    source = {'id': 'source', 'source_text': 'Audited geometry.', 'source_group': 'family'}
+    digest = hashlib.sha256(reviewer.drawing.encoded(source).encode()).hexdigest()
+    row = _row('row-1', provenance={'parents': ['source'], 'parent_sha256': {'source': digest}})
+    output = _output(tmp_path, [row])
+    reviewer.drawing.save_json(output / 'sources.json', {'source': source})
+    review = reviewer.Review(output)
+    assert review.sources['source'] == source
+    reviewer.drawing.save_json(output / 'sources.json', {'source': {**source, 'source_text': 'Different givens.'}})
+    with pytest.raises(ValueError, match='source registry changed'):
+        review.delete([row['id']], review.revision)
+    assert not (output / 'excluded.jsonl').exists()
+
+
+def test_review_uses_current_audited_sources_and_holds_missing_parent(tmp_path, monkeypatch):
+    text = 'The two diagonals intersect at their midpoints.'
+    text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    file_hash = 'a' * 64
+    locator = {'record_id': 'source-1', 'start_line': 10, 'end_line': 12}
+    source = {'id': 'source-1', 'source_text': text, 'source_text_sha256': text_hash,
+        'source_sha256': file_hash, 'source_path': '8/book.final.md', 'locator': locator,
+        'source_group': 'quadrilateral construction'}
+    reference = {key: source[key] for key in ('source_text_sha256', 'source_sha256', 'source_path', 'locator')}
+    provenance = {'parents': ['source-1'], 'parent_hashes': {'source-1': file_hash},
+        'parent_sources': {'source-1': reference}}
+    output = _output(tmp_path, [_row('row-1', provenance=provenance)])
+    monkeypatch.setattr(reviewer.author, 'load_pool', lambda: ({'source-1': source}, [], {}))
+
+    review = reviewer.Review(output)
+
+    assert review.sources == {'source-1': source}
+    assert review.rows['row-1']['provenance']['parent_sources']['source-1'] == reference
+
+    monkeypatch.setattr(reviewer.author, 'load_pool', lambda: ({}, [], {}))
+    with pytest.raises(ValueError, match='audited source missing'):
+        reviewer.Review(output)
+    assert not (output / 'excluded.jsonl').exists()
+
 
 def _rendered(tmp_path: Path, row: dict) -> dict:
     image = tmp_path / (row['id'] + '.png')
@@ -262,7 +310,7 @@ def test_move_deduplicates_exact_pairs_preserves_lineage_and_refreshes_hf(tmp_pa
     assert len(review.reconstructed) == 1
     row = next(iter(review.reconstructed.values()))
     assert row['task'] == 'Reconstruct' and row['current_tikz'] is None
-    assert row['instruction'] not in (generate['instruction'], edit['instruction'])
+    assert row['instruction'] is None
     assert 'evaluation_rubric' not in row
     assert row['target_tikz'] == generate['target_tikz'] == edit['target_tikz']
     assert row['split'] == 'test'
@@ -280,9 +328,12 @@ def test_move_deduplicates_exact_pairs_preserves_lineage_and_refreshes_hf(tmp_pa
     table = pq.read_table(output / 'reconstruct/candidates.parquet').to_pylist()
     assert table[0]['image']['bytes'] == table[0]['tikz_image']['bytes'] == original_bytes
     assert table[0]['target_tikz'] == generate['target_tikz']
+    assert table[0]['instruction'] is None
     assert pq.read_table(output / 'hf/reconstruct/test.parquet').num_rows == 1
-    assert pq.read_table(output / 'hf/generate/test.parquet').num_rows == 1
+    assert pq.read_table(output / 'hf/generate/test.parquet').num_rows == 0
     assert pq.read_table(output / 'hf/edit/test.parquet').num_rows == 0
+    export_report = json.loads((output / 'hf/export_report.json').read_text(encoding='utf-8'))
+    assert export_report['withheld_nonready_candidates']['generate']['ids'] == ['keep-2']
     restarted = reviewer.Review(output)
     assert restarted.reconstructed == review.reconstructed
     assert set(restarted.rows) == {kept['id']}

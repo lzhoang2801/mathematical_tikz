@@ -108,7 +108,7 @@ TikZ cung cấp các lệnh mô tả điểm, đường, đường tròn, nhãn 
 Khó khăn nằm ở việc kết hợp ba yêu cầu: hiểu dữ kiện toán học, lựa chọn thông tin cần thể hiện và hiện thực hóa thông tin đó thành mã TikZ có thể biên dịch. Hai hình có thể khác tọa độ và hình dạng nhưng cùng thỏa một hệ dữ kiện. Ngược lại, một hình gần giống ảnh tham chiếu vẫn có thể đặt sai chân đường cao hoặc sử dụng sai bán kính đường tròn. Do đó, chất lượng đầu ra cần được xem xét đồng thời về cấu trúc toán học, nội dung và khả năng đọc.
 
 \subsection{Objectives and scope}
-Dự án \emph{K-12 Mathematical Diagrams with TikZ: Generate, Edit \& Reconstruct} nghiên cứu một quy trình tạo và đánh giá mã TikZ cho ba tác vụ có liên hệ: Generate tạo hình từ yêu cầu bằng văn bản; Edit thay đổi một hình TikZ đang có; Reconstruct khôi phục hình từ ảnh nguồn. Đầu ra chung là mã TikZ có thể biên dịch, chỉnh sửa và tái sử dụng. Mặc dù tên dự án sử dụng K-12, phạm vi dữ liệu trong báo cáo này giới hạn ở hình học lớp 6--12.
+The project studies mathematical geometry diagrams in grades 6--12 through three tasks: Generate creates TikZ from geometric givens and requested constructions; Edit applies a specified change to an existing TikZ diagram; Reconstruct recreates the diagram in an image. The common output is editable TikZ source.
 
 Mục tiêu thứ nhất là xây dựng các cặp input--target có nguồn toán học rõ ràng, trong đó yêu cầu vẽ xác định được đối tượng, quan hệ và phạm vi cần thể hiện. Mục tiêu thứ hai là giữ generation trực tiếp trên TikZ, đồng thời sử dụng biểu diễn quan sát sau thực thi để kiểm tra đầu ra. Mục tiêu thứ ba là đo riêng Compile rate, Mathematical correctness, Content coverage và Visual readability, nhằm phân biệt lỗi cú pháp, lỗi quan hệ, thiếu nội dung và lỗi trình bày.
 
@@ -116,57 +116,82 @@ Báo cáo trình bày cơ sở nghiên cứu, định nghĩa tác vụ, quy trì
 
 \section{Related Work}
 \label{sec:related-work}
+Các nghiên cứu liên quan đặt ra ba câu hỏi gắn với bài toán của dự án: làm thế nào chuyển văn bản hoặc ảnh thành graphics program có thể chỉnh sửa; làm thế nào bảo toàn geometric constraints và nội dung toán học; và làm thế nào kiểm tra hình sau khi chương trình được thực thi. Phần này tổ chức các công trình theo những câu hỏi đó, đồng thời xem instruction-guided editing là một tác vụ có yêu cầu bảo toàn riêng. Cách phân nhóm giúp xác định những thành phần dự án kế thừa và những khác biệt cần giữ khi xây dựng dữ liệu, lựa chọn baselines và đánh giá.
 
-\subsection{Graphics program generation}
-Sinh graphics programs biểu diễn hình bằng mã có thể thực thi và chỉnh sửa. Với TikZ, các nghiên cứu tập trung vào hai dạng input: mô tả văn bản và ảnh. AutomaTikZ học ánh xạ caption--TikZ từ dữ liệu ghép cặp \cite{automat}, trong khi TikZero sử dụng image representations làm cầu nối giữa hiểu văn bản và sinh chương trình, cho phép kết hợp dữ liệu chưa ghép cặp \cite{ref1}. TikZilla mở rộng hướng sinh từ văn bản bằng SFT và RL, sử dụng rendered-image feedback trong quá trình tối ưu \cite{tikzilla}. Các phương pháp này khác nhau về nguồn supervision nhưng cùng đặt graphics program là đầu ra cuối cùng.
+\subsection{Graphics program synthesis from text and images}
+Graphics program synthesis biểu diễn hình bằng chương trình có thể thực thi thay vì chỉ bằng ảnh raster. Với TikZ, chương trình mô tả đối tượng, đường vẽ và nhãn trong môi trường \LaTeX; bản render là kết quả thực thi của mã. AutomaTikZ xây dựng dữ liệu caption--TikZ và fine-tune language models để sinh scientific vector graphics từ văn bản \cite{automat}. TikZero xử lý sự thiếu hụt dữ liệu text--program ghép cặp bằng cách dùng image representations làm cầu nối giữa các nguồn supervision \cite{ref1}. TikZilla tiếp tục hướng text-to-TikZ với dữ liệu chất lượng cao và reinforcement learning sử dụng tín hiệu từ bản render \cite{tikzilla}. Ba công trình cùng giữ chương trình là đầu ra, nhưng khác nhau ở cách tạo supervision và đưa chất lượng hình vào quá trình học.
 
-Đối với ảnh và sketch, DeTikZify kết hợp vision encoder với language model để khôi phục TikZ, đồng thời sử dụng MCTS với compiler diagnostics và perceptual similarity để cải thiện kết quả khi inference \cite{detikzify}. GeoTikzBridge tập trung vào hình học, sử dụng image-to-TikZ và instruction-augmented data để hỗ trợ geometric perception và reasoning \cite{geobridge}. Hướng sinh từ văn bản tương ứng với Generate, còn khôi phục từ ảnh tương ứng với Reconstruct trong dự án. Việc mô hình hóa hai tác vụ riêng cho phép phân biệt lỗi diễn giải dữ kiện với lỗi nhận dạng cấu trúc từ ảnh.
+Image-to-TikZ bổ sung một yêu cầu khác: suy ra cấu trúc chương trình từ bằng chứng thị giác. DeTikZify kết hợp vision encoder với language model để tái tạo scientific figures và sketches; ở inference, Monte Carlo Tree Search (MCTS) sử dụng kết quả thực thi và perceptual similarity để tìm chương trình phù hợp hơn \cite{detikzify}. GeoTikzBridge tập trung vào geometric diagrams, xây dựng image--TikZ data qua iterative self-refinement và localized geometric transformations, sau đó bổ sung instruction-guided auxiliary-line generation để hỗ trợ geometric reasoning \cite{geobridge}. Hướng thứ nhất nhấn mạnh khôi phục hình khoa học tổng quát, còn hướng thứ hai đặt local geometric structures và các phép dựng bổ sung vào trọng tâm của dữ liệu.
 
-\subsection{Geometric representations and mathematical diagrams}
+Các cơ chế trên xác lập cơ sở cho việc giữ TikZ là đầu ra chung của dự án. Tuy nhiên, text-to-TikZ và image-to-TikZ có nguồn bằng chứng khác nhau: Generate phải diễn giải geometric givens và requested constructions, trong khi Reconstruct phải nhận diện nội dung của một ảnh. Vì vậy, dự án giữ hai input contracts riêng, dù cùng huấn luyện để sinh TikZ. Thành công về compilation hoặc perceptual similarity trong scientific graphics cũng chưa xác lập việc bảo toàn mọi quan hệ toán học của một bài hình học; yêu cầu này cần được xem xét qua dữ liệu có ngữ cảnh và các kiểm tra quan hệ.
+
+\subsection{Constraint-based generation and curriculum-grounded diagrams}
 \label{sec:geometry-ir}
-Các phương pháp dựa trên biểu diễn hình học tách diễn giải yêu cầu khỏi hiện thực hóa tọa độ. MagicGeo chuyển mô tả sang formal language gồm điểm và ràng buộc, rồi sử dụng solver trước bước sinh hình có thông tin tọa độ \cite{magicgeo}. GeoLoom phát triển GeoLingua để biểu diễn hình, constructive dependencies và các điều kiện hình học, kết hợp coordinate solver và constraint-based evaluation \cite{ref3}.
+Constraint-based generation tách việc xác định quan hệ hình học khỏi việc chọn tọa độ để hiện thực hóa chúng. MagicGeo chuyển mô tả tự nhiên thành formal language gồm điểm và constraints, giải bài toán tọa độ, rồi thực hiện coordinate-aware TikZ generation \cite{magicgeo}. Khi solver không tìm được cấu hình phù hợp, phản hồi được dùng để xem lại bước autoformalization. GeoLoom phát triển GeoLingua với shapes, constructive dependencies, length constraints và angle constraints; free points và dependent points được phân biệt để solver hiện thực hóa cấu hình theo quan hệ dựng hình \cite{ref3}. Điểm chung của hai phương pháp là đưa geometric constraints vào một biểu diễn mà solver có thể xử lý, thay vì giao toàn bộ phép tính tọa độ cho language model.
 
-Khác với các tập scientific figures tổng quát, MathemaTikZ xây dựng benchmark từ curriculum, ghép diagram với mô tả, ngữ cảnh bài toán và TikZ \cite{mathematikz}. Thí nghiệm sinh hình của công trình sử dụng 50 diagram lớp 7 và đánh giá việc bảo toàn thông tin toán học bằng phán xét binary của người chấm. Hai hướng nghiên cứu bổ sung nhau: formal representations xác định quan hệ cần thỏa, còn dữ liệu có ngữ cảnh xác định nội dung cần truyền đạt. Dự án tập trung vào dữ liệu lớp 6--12 của Việt Nam, giữ TikZ là đầu ra và sử dụng biểu diễn quan sát cho bước verification sau generation.
+Constructive dependencies đặc biệt liên quan đến hình toán học phổ thông: trung điểm, giao điểm và chân đường vuông góc phải phụ thuộc vào các đối tượng đã được định nghĩa. Tuy nhiên, một cấu hình thỏa constraints chưa tự xác định đầy đủ thông tin người đọc cần thấy. Chẳng hạn, quan hệ vuông góc có thể đúng trong tọa độ nhưng ký hiệu góc vuông vẫn thiếu; một đường phụ hợp lệ cũng có thể nằm ngoài phạm vi hình được yêu cầu. Vì vậy, dự án phân biệt geometric givens, construction constraints và drawing scope khi chuẩn bị instruction. Generation vẫn tạo TikZ trực tiếp; observed representation được xây dựng sau thực thi để verification, khác với formal language làm đầu vào cho solver trong MagicGeo và GeoLoom.
 
-\subsection{Instruction-guided figure editing}
-Figure editing đòi hỏi hoàn thành thay đổi được yêu cầu đồng thời bảo toàn nội dung còn lại. Edit2TikZ xây dựng benchmark từ ảnh nguồn và instruction, tổ chức thay đổi thành tám loại edit operations và đánh giá riêng edit completion với non-target preservation \cite{edit2tikz}. EdiTikZ khai thác các cặp hình có liên hệ trong revision trajectories để xây dựng DaEdiTikZ, suy ra instruction từ renders và mã, rồi huấn luyện chung reconstruction và editing trước giai đoạn RL \cite{editikz}. Một hướng tập trung vào benchmark và edit units, hướng còn lại tập trung vào supervision từ thay đổi của hình do con người tạo.
+Curriculum-grounded data cung cấp góc nhìn bổ sung về việc chọn nội dung cần truyền đạt. MathemaTikZ gắn diagrams với mathematical context, descriptions và TikZ trong curriculum; thí nghiệm trên 50 diagrams lớp 7 so sánh các mức chất lượng mô tả và việc cung cấp TikZ primer \cite{mathematikz}. Human evaluation chấp nhận stylistic variations nếu hình vẫn truyền đạt những mathematical details quan trọng. Kết quả và error analysis của công trình cho thấy cần xem xét chất lượng mô tả bên cạnh khả năng sinh mã: một instruction thiếu quan hệ quan trọng có thể dẫn tới hình biên dịch được nhưng không thể hiện đúng nội dung tham chiếu.
 
-Các settings nhận ảnh nguồn phải xử lý cả khôi phục mã và thực hiện chỉnh sửa. Trong dự án, Edit nhận trực tiếp \texttt{current\_tikz} cùng instruction, nên việc chỉnh sửa được đặt trên một chương trình đã có. Sự khác biệt về input này cần được giữ khi lựa chọn dữ liệu và baselines; yêu cầu bảo toàn các đối tượng ngoài phạm vi sửa vẫn là thuộc tính chung của tác vụ.
+Dự án kế thừa cách gắn diagram với nguồn toán học, đồng thời giới hạn dữ liệu vào hình học lớp 6--12 trong chương trình Toán K-12 tại Việt Nam. Với Generate và Edit, những dữ kiện cần dùng được đưa vào self-contained instruction; original problem và source lineage được lưu riêng để review và phân chia dữ liệu. Cách tổ chức này phục vụ việc kiểm tra input--target alignment và tránh đưa các biến thể của cùng nguồn vào những splits khác nhau.
 
-\subsection{Diagram evaluation}
-Đánh giá graphics programs thường kết hợp compilation success, độ tương đồng mã và độ tương đồng bản render \cite{detikzify,ref1}. Những thước đo này phản ánh khả năng thực thi và fidelity với tham chiếu. Đối với editing, Edit2TikZ bổ sung RestorationScore và EditCorrectnessScore, sử dụng model judge được đối chiếu với human annotations để đánh giá phần giữ nguyên và phần thay đổi \cite{edit2tikz}. MathemaTikZ sử dụng human evaluation để xác định việc bảo toàn thông tin toán học \cite{mathematikz}. Các lựa chọn này khác nhau về đơn vị và mục tiêu đánh giá, từ chất lượng toàn hình tới mức hoàn thành một phép sửa.
+\subsection{Instruction-guided editing and content preservation}
+Instruction-guided editing yêu cầu đồng thời áp dụng thay đổi và bảo toàn nội dung ngoài phạm vi thay đổi. Edit2TikZ tổ chức scientific figure editing thành tám loại edit operations, với source image và instruction làm input; đánh giá tách edit correctness khỏi restoration của phần cần giữ nguyên \cite{edit2tikz}. EdiTikZ khai thác revision trajectories của scientific figures để xây dựng DaEdiTikZ: các phiên bản liên quan cung cấp cặp trước--sau, còn mã và renders hỗ trợ tạo edit instructions. Công trình kết hợp reconstruction và editing trong supervised training, sau đó tiếp tục tối ưu bằng reinforcement learning \cite{editikz}. Hai hướng cung cấp những cách bổ sung nhau để xác định edit units và thu thập supervision từ thay đổi của hình.
 
-DiagramIR đưa việc kiểm tra quan hệ vào một pipeline gồm semantic extraction và rule-based verification: LLM chuyển TikZ sang IR có schema, sau đó các checks đánh giá thực thể và quan hệ trong IR \cite{ref2}. IR ở đây được xây dựng từ output, khác với formal representations làm input cho coordinate solver trong MagicGeo và GeoLoom \cite{magicgeo,ref3}. Dự án sử dụng PDF/PGF để xác lập bằng chứng sau thực thi và tính riêng Compile rate, Mathematical correctness, Content coverage, Visual readability. Cách tiếp cận này đặt trọng tâm vào các quan hệ và đối tượng quan sát được thay vì yêu cầu output khớp tọa độ hoặc chuỗi lệnh của target.
+Trong hình học phổ thông, preservation còn bao gồm các dependencies của cấu hình. Bổ sung một thiết diện hoặc đường phụ phải giữ quan hệ với hình đã có; thay đổi một điểm tự do có thể đòi hỏi cập nhật các điểm phụ thuộc. Vì thế, Edit instruction của dự án được viết theo actual current TikZ và xác định rõ phép dựng hoặc thay đổi cần hoàn thành. Target là chương trình hoàn chỉnh sau chỉnh sửa, được review cùng instruction để kiểm tra cả phần bổ sung lẫn nội dung cần giữ.
 
-Bảng~\ref{tab:related-work} tổng hợp input và cơ chế của các hướng nghiên cứu trên.
+Input của Edit trong dự án là \texttt{current\_tikz} và instruction. Setting này khác với image-conditioned editing ở chỗ chương trình ban đầu đã được cung cấp, nên không yêu cầu mô hình khôi phục mã từ ảnh trước khi sửa. Sự khác biệt đó cần được giữ khi chọn baselines và diễn giải kết quả: điểm editing của một benchmark nhận ảnh không thể chuyển trực tiếp sang setting nhận mã. Dự án dùng các tiêu chí chung để kiểm tra target và output sau chỉnh sửa; các tiêu chí này đo những quan hệ và nội dung được hỗ trợ, còn việc thay đổi có đúng ý instruction hay không vẫn cần được xác lập khi curation.
 
+\subsection{Diagram evaluation beyond compilation and visual similarity}
+Compilation, visual similarity và mathematical correctness trả lời những câu hỏi khác nhau. DeTikZify và TikZero dùng các thước đo về execution và similarity để đánh giá graphics program synthesis \cite{detikzify,ref1}. Các thước đo này phù hợp với việc tái tạo một hình tham chiếu, nhưng một bản render gần giống vẫn có thể chứa quan hệ sai; ngược lại, hai cấu hình khác hình dạng có thể cùng thỏa những dữ kiện không cố định tọa độ. MathemaTikZ xử lý khác biệt về hình thức bằng human judgments về mathematical information preservation \cite{mathematikz}. Với editing, Edit2TikZ dùng RestorationScore và EditCorrectnessScore, cùng model-based judgments được đối chiếu với human annotations, để phân biệt preservation và edit completion \cite{edit2tikz}. Những kết quả này cần được diễn giải theo task, tiêu chí và đơn vị đánh giá của từng công trình.
 
+DiagramIR đề xuất tách semantic extraction khỏi deterministic verification \cite{ref2}. Một LLM back-translates TikZ thành intermediate representation (IR) có schema; rule-based checks sau đó đánh giá mathematical và spatial criteria. Công trình đo agreement với human ratings để kiểm chứng pipeline, đồng thời giới hạn mục tiêu vào mathematical và visual soundness, thay vì coi đó là đánh giá đầy đủ prompt alignment hay pedagogical usefulness. Sự tách biệt này là cơ sở trực tiếp cho việc xây dựng các kiểm tra có thể thực thi và truy vết, nhưng độ tin cậy của kết quả vẫn phụ thuộc vào representation được trích xuất và phạm vi của từng check.
+
+Dự án áp dụng sự tách biệt giữa observation và verification bằng bằng chứng từ executed PDF paths, glyph outlines và PGF probes. Offline evaluator nhận \texttt{target\_tikz} và \texttt{output\_tikz}, không nhận instruction hay một LLM rubric verdict. Bốn chiều được tính riêng là Compile rate, Mathematical correctness, Content coverage và Visual readability. Cách so sánh quan hệ và nội dung quan sát được cho phép chấp nhận các cấu hình hợp lệ khác tọa độ hoặc cách viết mã; việc calibration phải bao gồm cả valid variants lẫn deliberate violations.
+
+Phạm vi đánh giá này cũng xác định giới hạn của báo cáo. Target-inferred relations có thể bao gồm quan hệ ngẫu nhiên của một bản vẽ, còn dữ kiện chỉ có trong original instruction không nhất thiết được khôi phục từ render. Với hình không gian, một 2D projection không đủ để xác lập mọi độ dài hoặc góc trong 3D. Do đó, source fidelity và input--target alignment được review trước khi đóng băng mẫu; điểm tối đa chỉ thể hiện rằng các supported extracted checks đã vượt qua. Bảng~\ref{tab:related-work} tóm tắt mối liên hệ giữa các hướng nghiên cứu và thiết kế của dự án.
 
 \begin{table}[tbp]
 \centering
 \small
-\caption{Các hướng nghiên cứu liên quan tới Generate, Edit, Reconstruct và evaluation. Các mô tả là tổng hợp của báo cáo từ những công trình được trích dẫn.}
+\caption{Các hướng nghiên cứu và mối liên hệ với thiết kế của dự án. Bảng so sánh task và mechanism, không xếp hạng kết quả giữa các benchmarks khác nhau.}
+
 \label{tab:related-work}
 \renewcommand{\arraystretch}{1.15}
-\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{.24\linewidth} >{\raggedright\arraybackslash}p{.22\linewidth} >{\raggedright\arraybackslash}X@{}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{.29\linewidth} >{\raggedright\arraybackslash}p{.27\linewidth} >{\raggedright\arraybackslash}X@{}}
 \toprule
-\textbf{Công trình} & \textbf{Input / trọng tâm} & \textbf{Cơ chế và ý nghĩa đối với dự án} \\
+\textbf{Hướng nghiên cứu} & \textbf{Mechanism} & \textbf{Liên hệ với dự án} \\
 \midrule
-MathemaTikZ \cite{mathematikz} & Mô tả, ngữ cảnh toán học & Benchmark theo curriculum; target gắn với nội dung bài toán. \\
-AutomaTikZ; TikZilla \cite{automat,tikzilla} & Text-to-TikZ & Sinh mã trực tiếp; supervision ghép cặp và rendering-aware training. \\
-TikZero \cite{ref1} & Text-guided synthesis & Image representations kết nối các nguồn dữ liệu chưa ghép cặp. \\
-MagicGeo; GeoLoom \cite{magicgeo,ref3} & Mô tả hình học & Formal representation và coordinate solver; tách dữ kiện khỏi hiện thực hóa tọa độ. \\
-DeTikZify; GeoTikzBridge \cite{detikzify,geobridge} & Image/sketch-to-TikZ & Học khôi phục chương trình; search hoặc dữ liệu hình học hỗ trợ perception. \\
-Edit2TikZ; EdiTikZ \cite{edit2tikz,editikz} & Ảnh và yêu cầu sửa & Edit units hoặc revision trajectories; phân biệt edit application và preservation. \\
-DiagramIR \cite{ref2} & TikZ-to-IR & Semantic extraction bằng LLM, sau đó kiểm tra theo quy tắc. \\
+AutomaTikZ; TikZero; TikZilla \cite{automat,ref1,tikzilla} & Text-guided program synthesis; paired hoặc bridged supervision & Generate giữ TikZ là đầu ra; mathematical requirements cần review riêng. \\
+DeTikZify; GeoTikzBridge \cite{detikzify,geobridge} & Image-to-TikZ; search hoặc geometry-focused data & Reconstruct nhận ảnh; phân biệt perception với diễn giải givens. \\
+MagicGeo; GeoLoom \cite{magicgeo,ref3} & Autoformalization và coordinate solving & Constraints và dependencies định hướng instruction; verification diễn ra sau generation. \\
+MathemaTikZ \cite{mathematikz} & Curriculum context và mathematical information preservation & Nguồn toán học và input--target alignment định hướng curation. \\
+Edit2TikZ; EdiTikZ \cite{edit2tikz,editikz} & Edit operations và revision trajectories & Edit nhận current TikZ; review cả thay đổi và preservation. \\
+DiagramIR \cite{ref2} & TikZ-to-IR và rule-based checks & Tách observation khỏi verification; dùng PDF/PGF và bốn metric riêng. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
 \section{Methodology}
 \label{sec:methodology}
-\subsection{Overview}
+\subsection{Task formulation}
+\label{sec:tasks}
+Gọi $I$ là self-contained instruction, $Z_{\mathrm{in}}$ là current TikZ, $J$ là một diagram image và $Z$ là target TikZ. Ba tác vụ có sample inputs như sau:
+\begin{equation}
+\begin{aligned}
+\mathrm{Generate}:&\quad I\longmapsto Z,\\
+\mathrm{Edit}:&\quad (I,Z_{\mathrm{in}})\longmapsto Z,\\
+\mathrm{Reconstruct}:&\quad J\longmapsto Z.
+\end{aligned}
+\end{equation}
+Generate tạo hình từ geometric givens và requested constructions trong $I$. Edit chỉnh sửa $Z_{\mathrm{in}}$ theo $I$ và trả về TikZ code hoàn chỉnh, bảo toàn các đối tượng và quan hệ không thuộc phạm vi thay đổi. Reconstruct tái tạo geometry, labels, notation và line styles nhìn thấy trong $J$. Với cả ba tác vụ, TikZ code cần biên dịch được và biểu diễn đúng nội dung hình học của đầu vào.
+
+\subsection{Pipeline overview}
 \label{sec:overview}
+Quy trình gồm năm giai đoạn: chuẩn bị nguồn từ tài liệu toán học, biên soạn instruction và tạo TikZ code, rà soát các cặp dữ liệu, supervised fine-tuning và đánh giá hình đầu ra (Hình~\ref{fig:method-overview}). Generate và Edit được xây dựng từ các bài toán hình học đã tuyển chọn. Dữ liệu Reconstruct gồm các cặp ảnh và TikZ code tương ứng.
+
+Document parsing dùng MinerU \cite{mineru} để trích xuất văn bản, công thức và hình minh họa từ tài liệu. Synthetic construction tái sử dụng drawing harness có compiler feedback để hỗ trợ chỉnh sửa hình. Training dùng Qwen3.5-4B và Unsloth \cite{qwen35,unsloth35} với các cặp dữ liệu được kiểm tra và chia thành train, validation và test trước đó. Evaluator tách observation và executable checks để đánh giá theo bốn tiêu chí: Compile, Mathematical correctness, Content coverage và Visual readability.
+
 \begin{figure}[p]
 \centering
 \begin{tikzpicture}[x=1cm,y=1cm,
@@ -221,7 +246,7 @@ Givens $\rightarrow$ instruction\\
 minimum height=1.55cm,inner sep=5pt,
 font=\sffamily\fontsize{8}{10}\selectfont,below=2mm of author] (reconstruct)
 {\textbf{Reconstruct}\\[3pt]
-Diagram image};
+Reviewed image--TikZ pair};
 
 \filldraw[draw=borderPrimary!60,fill=bgPrimary!35,rounded corners=5pt]
 (4.85,-5.2) rectangle (12.5,-8.85);
@@ -297,101 +322,87 @@ Visual readability};
 \draw[arrow,dashed] (test.south)--(3.88,-14.87)--(16.08,-14.87)|-(metrics.east);
 \node[muted,fill=white,inner sep=2pt] at (9.35,-14.87) {Reference TikZ};
 \end{tikzpicture}
-\caption[Overview of the curriculum-grounded TikZ pipeline]{\textbf{Overview of the curriculum-grounded TikZ pipeline.} MinerU chuyển SGK/SGV thành văn bản, công thức và hình có liên kết nguồn. ToC Parser phân đoạn theo quy tắc, sau đó manual review lựa chọn các bài toán hình học. Gemini tạo instruction và sinh TikZ qua vòng lặp generate--render--revise. Các cặp dữ liệu được rà soát, chia theo bài toán nguồn và dùng cho fine-tuning Qwen3.5 với Unsloth. Output trên held-out inputs được đánh giá bằng bốn metrics. Ví dụ trung tuyến minh họa input và hình đầu ra.}
+\caption[Overview of the curriculum-grounded TikZ pipeline]{\textbf{Overview of the curriculum-grounded TikZ pipeline.} Corpus được chuẩn bị bằng MinerU và xử lý cấu trúc; manual selection xác định nguồn hình học lớp 6--12. Generate/Edit được biên soạn instruction và tạo candidate TikZ qua drawing harness hiện có. Reconstruct dùng các cặp image--TikZ đã được kiểm tra, đi trực tiếp vào curation. Các cặp được review và chia theo source family trước SFT với Qwen3.5 và Unsloth. Targets chỉ cung cấp supervision hoặc reference cho evaluation, không đi vào input khi inference.}
 \label{fig:method-overview}
 \end{figure}
-Chúng tôi xây dựng một pipeline từ tài liệu toán học phổ thông đến dữ liệu huấn luyện cho ba tác vụ Generate, Edit và Reconstruct (Hình~\ref{fig:method-overview}). Pipeline gồm sáu giai đoạn: phân tích tài liệu bằng OCR, phân đoạn theo cấu trúc mục lục và tuyển chọn bài toán, tạo dữ liệu TikZ, rà soát và tổ chức dữ liệu, supervised fine-tuning, và đánh giá tất định. Nội dung toán học được lấy từ SGK/SGV lớp 6--12 thuộc bộ \emph{Kết nối tri thức với cuộc sống}. Văn bản, công thức và hình minh họa được giữ cùng vị trí nguồn để làm căn cứ cho việc biên soạn yêu cầu vẽ và kiểm tra target.
 
-MinerU chuyển tài liệu thành nội dung có cấu trúc \cite{mineru}; ToC Parser và manual review xác định các bài toán được đưa vào bước tạo dữ liệu. Google Gemini 3.8 Flash với thinking level \texttt{high} thực hiện biên soạn instruction và sinh mã trong drawing harness \cite{geminiflash}. Các cặp input--target được rà soát trước khi dùng cho fine-tuning Qwen3.5 bằng Unsloth \cite{qwen35,unsloth35}. Mục~\ref{sec:tasks} xác định các tác vụ; Mục~\ref{sec:document-parsing}--\ref{sec:problem-extraction} trình bày xử lý nguồn; Mục~\ref{sec:information-selection}--\ref{sec:data-curation} mô tả xây dựng và tuyển chọn dữ liệu. Giai đoạn huấn luyện và bốn metrics được trình bày lần lượt tại Mục~\ref{sec:fine-tuning} và Mục~\ref{sec:evaluation}.
-
-\subsection{Task formulation}
-\label{sec:tasks}
-Chúng tôi biểu diễn đầu ra của cả ba tác vụ bằng mã TikZ có thể biên dịch và chỉnh sửa. Cách đặt bài toán dưới dạng sinh chương trình đồ họa có điều kiện đã được sử dụng cho text-to-TikZ trong AutomaTikZ \cite{automat}, image-to-TikZ trong DeTikZify \cite{detikzify}, và chỉnh sửa theo instruction trong EdiTikZ \cite{editikz}. Gọi $I$ là instruction, $Z_{\mathrm{in}}$ là mã TikZ hiện tại, $J$ là ảnh diagram và $Z$ là mã đầu ra. Các ánh xạ được xác định như sau:
-\begin{equation}
-\begin{aligned}
-\mathrm{Generate}:&\quad I \longmapsto Z,\\
-\mathrm{Edit}:&\quad (I,Z_{\mathrm{in}}) \longmapsto Z,\\
-\mathrm{Reconstruct}:&\quad (I,J) \longmapsto Z.
-\end{aligned}
-\end{equation}
-Với Generate, $I$ mô tả đầy đủ các đối tượng, quan hệ và phép dựng cần thể hiện. Với Edit, $I$ xác định thay đổi trên $Z_{\mathrm{in}}$; phần hình không thuộc phạm vi thay đổi được bảo toàn. Với Reconstruct, $J$ cung cấp cấu hình cần tái tạo, còn $I$ là yêu cầu khôi phục hình. Mô hình cần tái hiện các đối tượng, kết nối và ký hiệu quan sát được trong ảnh bằng mã TikZ.
-
-Mỗi mẫu có một target $Z^\star$ được chuẩn bị ngoại tuyến để làm đầu ra supervision và tham chiếu đánh giá. Khi thực hiện tác vụ, mô hình chỉ nhận các thành phần đầu vào tương ứng trong ánh xạ trên. Target, quyết định duyệt và điểm đánh giá không được đưa vào context sinh mã.
-
-\subsection{Textbook document parsing}
+\subsection{Curriculum source preparation}
+\subsubsection{Document parsing and corpus inputs}
 \label{sec:document-parsing}
-Tài liệu nguồn gồm SGK và SGV Toán lớp 6--12 thuộc bộ \emph{Kết nối tri thức với cuộc sống}. Chúng tôi sử dụng MinerU để nhận dạng văn bản, công thức và bố cục trang, đồng thời trích xuất hình minh họa từ PDF \cite{mineru}. Đầu ra được tổ chức thành văn bản Markdown, thông tin layout và các image crops. Liên kết giữa nội dung trích xuất với trang và khối nguồn được giữ lại để hỗ trợ đối chiếu khi phát biểu chứa ký hiệu mơ hồ hoặc phụ thuộc vào hình.
+Dữ liệu nội dung được lấy từ processed local corpus của SGK/SGV Toán lớp 6--12 thuộc bộ \emph{Kết nối tri thức với cuộc sống}. Corpus được chuẩn bị bằng document parsing với MinerU, công cụ cung cấp text, formulas, layout và image extraction \cite{mineru}. Dự án sử dụng kết quả đã xử lý và rà soát, thay vì coi raw OCR là phát biểu toán học đã xác nhận. Với lớp 6--9, input gồm final Markdown, final layout, final ToC và thư mục images. Với lớp 10--12, input gồm Markdown, layout và images tương ứng. Các file này là source of truth cho việc tuyển chọn.
 
-Cấu trúc sau OCR được chuẩn hóa theo quy tắc trình bày của từng cuốn sách. Các heading và khối nội dung được gán vai trò dựa trên dấu hiệu bố cục của trang in. Đối với SGK, các vai trò phân biệt bài học, mục kiến thức, ví dụ, luyện tập, vận dụng và bài tập. Đối với SGV, các vai trò phân biệt đơn vị dạy học, mục tiêu và hướng dẫn giảng dạy. Sự phân biệt này được giữ trong dữ liệu đầu ra để bước tuyển chọn có thể xác định đâu là phát biểu bài toán và đâu là phần giải thích hoặc hướng dẫn.
+Page/block locators và image links giữ liên kết giữa phát biểu với vị trí nguồn. Chúng phục vụ việc xử lý ký hiệu mơ hồ, subquestions và thông tin phụ thuộc hình. OCR hoặc layout errors phải được nhận diện khi source review. Pipeline downstream không tự sửa corpus để làm cho một candidate phù hợp. Các crops đã bị xóa khỏi corpus cũng được loại khỏi downstream manifest thay vì tái tạo từ bản cũ.
 
-\subsection{Rule-based ToC parsing and problem selection}
+\subsubsection{Document segmentation and source selection}
 \label{sec:problem-extraction}
-ToC Parser sử dụng các quy tắc về cấp heading và vai trò nội dung để phân đoạn tài liệu theo chương, bài học và mục. Các khối văn bản, công thức và hình được gom theo vùng nội dung tương ứng, đồng thời giữ thứ tự đọc và vị trí nguồn. Bước này tạo các đơn vị tài liệu để rà soát, chưa quyết định đơn vị nào đủ điều kiện trở thành một mẫu huấn luyện.
+Rule-based ToC parsing dùng heading hierarchy và content roles để gom chương, bài học và các khối liên quan theo thứ tự đọc. Đây là bước tổ chức tài liệu của dự án, không phải thuật toán suy luận toán học. Manual selection sau đó xét một ví dụ, luyện tập hoặc bài tập hoàn chỉnh, bao gồm ngữ cảnh và các tiểu ý cần để xác định cấu hình. Phát biểu bài toán được phân biệt với lời giải hoặc hướng dẫn của SGV. Các nguồn chưa xác định rõ ký hiệu hay configuration branch cần được giải quyết trước authoring.
 
-Chúng tôi tuyển chọn các bài toán hình học bằng manual review. Đơn vị tuyển chọn là một ví dụ, luyện tập hoặc bài tập hoàn chỉnh, bao gồm các tiểu ý và ngữ cảnh cần thiết để xác định giả thiết, đối tượng và phép dựng. Người rà soát đối chiếu phát biểu với hình đi kèm và giữ những bài có thể xác định rõ nội dung cần thể hiện. Các ký hiệu hoặc nhánh cấu hình chưa xác định được được giữ lại để rà soát tiếp, trước khi chuyển sang biên soạn instruction. Khi SGV cung cấp ngữ cảnh bổ sung, nội dung này vẫn được phân biệt với giả thiết của đề bài.
+Selection ưu tiên các bài có named objects, geometric relations và construction scope rõ ràng. Với mở rộng lớp 10--12, nguồn tập trung vào spatial/solid geometry constructions và loại real-world application scenes. Source ledger lưu original statement, locator và duplicate-source links. Sample chỉ giữ source reference cùng task input và target. Source metadata không trở thành các điều kiện bổ sung cho mô hình.
 
-Mỗi bài toán được gắn lớp học, sách, vị trí văn bản, trang và hình nguồn. Những bản ghi xuất phát từ cùng một bài toán được liên kết bằng source family. Định danh này được truyền qua các bước tạo dữ liệu và curation để truy xuất nguồn và kiểm soát việc chia train, validation và test.
-
-\subsection{Mathematical givens and information selection}
+\subsection{Instruction authoring and candidate construction}
+\subsubsection{Geometric givens and drawing scope}
 \label{sec:information-selection}
-Instruction được biên soạn từ mathematical givens và phạm vi dựng hình của bài toán đã tuyển chọn. Các phương pháp như MagicGeo và GeoLoom sử dụng ràng buộc hình học để xác định tọa độ từ mô tả ngôn ngữ \cite{magicgeo,ref3}. Trong phương pháp của chúng tôi, các định nghĩa và quan hệ cần dựng được diễn đạt trực tiếp trong instruction; mô hình sinh mã TikZ từ instruction này. Việc biên soạn phân biệt ba thành phần: dữ kiện có trong nguồn, quan hệ cần thỏa khi dựng hình, và thông tin cần truyền đạt qua nét vẽ, nhãn hoặc ký hiệu.
+Instruction authoring chuyển source text hoặc audited givens thành yêu cầu vẽ tự chứa. Việc phân biệt free points, dependent points và constructive dependencies tham chiếu GeoLoom. Cách biểu diễn quan hệ có thể kiểm tra bằng constraints tham chiếu MagicGeo \cite{ref3,magicgeo}. Dự án dùng những khái niệm này để chuẩn bị và review instruction, không triển khai lại GeoLingua hoặc coordinate solver của hai công trình. Đầu ra của generation vẫn là TikZ trực tiếp.
 
-Chẳng hạn, yêu cầu dựng trung tuyến $AM$ của tam giác $ABC$ cần xác định $M$ là trung điểm của $BC$ và yêu cầu vẽ đoạn $AM$. Định nghĩa trung điểm quyết định vị trí phụ thuộc của $M$, còn yêu cầu vẽ quyết định sự hiện diện của đoạn $AM$ trong hình. Tọa độ cụ thể của các đỉnh có thể thay đổi trong những cấu hình thỏa giả thiết. Instruction chỉ giữ các điều kiện tọa độ hoặc độ dài khi chúng là một phần của nội dung toán học cần thể hiện.
+Mỗi instruction cần làm rõ named objects, incidences, metric givens cần giữ, nondegeneracy và nhánh giao điểm khi có nhiều nghiệm. Ba loại thông tin được phân biệt: original givens của nguồn, definitions của requested auxiliary constructions và visible content cần thể hiện. Chẳng hạn, dựng trung tuyến $AM$ trong tam giác $ABC$ cần định nghĩa $M=(B+C)/2$ và yêu cầu vẽ $AM$. Định nghĩa quyết định phụ thuộc tọa độ. Drawing scope quyết định sự hiện diện của nét vẽ và nhãn. Tọa độ được chọn để hiện thực hóa hình không tự trở thành một source given.
 
-Đối với các phép dựng phụ, instruction xác định đối tượng tham chiếu, điều kiện dựng và nhánh cấu hình khi có nhiều nghiệm. Kết luận cần chứng minh được phân biệt với giả thiết để tránh đưa kết quả bài toán thành điều kiện đầu vào. Các relation marks được lựa chọn theo thông tin cần truyền đạt; sự tồn tại của một quan hệ hình học không tự động yêu cầu thêm một dấu riêng cho mọi vị trí có quan hệ đó.
+Author nhận một batch source contexts, mỗi nguồn dùng source text hoặc givens đã kiểm tra. System instruction và few-shots xác định authoring behavior. Structural admission checks kiểm tra trường không rỗng, source identity và liên kết với base diagram. Các checks này không xác nhận mathematical fidelity. Conclusions cần chứng minh không được chuyển thành premises. Auxiliary constructions phải có định nghĩa và mục đích hình học. Relation marks được chọn theo thông tin cần truyền đạt, thay vì đánh dấu mọi quan hệ tình cờ đúng trong cấu hình. Edit instruction được viết theo actual current TikZ, không theo một hình ban đầu giả định.
 
-\subsection{Synthetic TikZ construction}
+\subsubsection{Bounded generation with execution feedback}
 \label{sec:drawing-workflow}
-Giai đoạn này tạo các cặp dữ liệu ứng viên từ input theo từng tác vụ. Google Gemini 3.8 Flash với thinking level \texttt{high} được sử dụng cho instruction authoring và sinh TikZ \cite{geminiflash}. Với Generate, bước authoring diễn đạt các mathematical givens thành yêu cầu vẽ tự chứa. Với Edit, bước này xác định thay đổi trên một bản TikZ có sẵn và giữ liên kết với cấu hình ban đầu. Với Reconstruct, ảnh diagram là dữ liệu điều kiện để chuẩn bị target tương ứng. Ảnh nguồn được giữ nguyên trong cặp dữ liệu; phần TikZ là biểu diễn cần tái tạo.
+Synthetic Generate/Edit candidates được tạo qua drawing harness hiện có của MathPaper. Production snapshot hiện ghi model identifier \texttt{gemini-3.8-flash-high}. Đây là cấu hình của run, không phải thành phần của định nghĩa tác vụ. Harness tổ chức model reasoning và tool actions theo ReAct-style interaction, trong đó observations từ công cụ cung cấp thông tin cho bước tiếp theo \cite{react}. Citation này quy nguồn cho interaction pattern. Các drawing tools, wrapper và checkpoint rules là triển khai đang được tái sử dụng trong dự án.
 
-Drawing harness tổ chức việc sinh và sửa mã theo vòng lặp ReAct, trong đó mô hình xen kẽ suy luận với hành động gọi công cụ và sử dụng kết quả công cụ cho bước tiếp theo \cite{react}. Ở mỗi vòng, mô hình đề xuất mã TikZ; công cụ render biên dịch mã trong wrapper thống nhất và trả lại ảnh cùng compiler diagnostics. Mô hình sử dụng phản hồi này để sửa mã hoặc kết thúc. Số lần gọi được giới hạn bởi harness; những lượt không tạo được kết quả hợp lệ trong ngân sách được ghi nhận là thất bại. Cách sử dụng compiler feedback để sửa mã cũng xuất hiện trong pipeline chuẩn bị dữ liệu của TikZilla \cite{tikzilla}.
+Với task input đã chuẩn bị, mô hình đề xuất TikZ và gọi rendering tools. Compiler thực thi mã trong shared wrapper, trả render hoặc diagnostics. Mô hình có thể sửa mã và gọi lại công cụ trong ngân sách cho phép. Execution feedback đã được dùng trong TikZ synthesis, chẳng hạn compiler-guided preparation trong TikZilla và inference search trong DeTikZify \cite{tikzilla,detikzify}. Pipeline ở đây dùng bounded tool loop của harness, không dùng MCTS của DeTikZify hay rendering-based RL để tạo candidates. Tools hỗ trợ label collision repair và relation-mark placement. Output sau sửa vẫn cần được kiểm tra về geometry và source alignment.
 
-Khâu hoàn thiện bản vẽ xử lý khoảng cách giữa nhãn và nét vẽ, đồng thời bố trí relation marks trên các đối tượng tương ứng. Các điều chỉnh trình bày giữ nguyên các quan hệ dựng hình đã xác định. Sau mỗi lần sửa, mã được biên dịch lại để phản hồi gắn với đúng phiên bản TikZ. Harness lưu input, mã cuối, render và lịch sử xử lý; các artifacts này được chuyển sang bước curation để kiểm tra sự phù hợp giữa yêu cầu và hình thực tế.
+Production pin source snapshots, model configuration và harness/prompt versions. Author-call budgets, drawing-attempt budgets và per-case model-call limits được ghi trong run configuration. Kết quả được checkpoint sau từng stage để resume với cùng inputs. Hết ngân sách, compile failure hoặc một cặp chưa đủ review evidence được giữ thành trạng thái chưa hoàn thành hoặc candidate, không tự nâng thành approved target. Reconstruct preparation tiếp nhận verified image--TikZ pairs, giữ exact image/code bytes. Bước này không giả định rằng mọi source crop đã có target hợp lệ.
 
-\subsection{Data curation}
+\subsection{Curation and source-grouped splits}
 \label{sec:data-curation}
-Data curation chuyển các cặp ứng viên thành dữ liệu supervision đã được rà soát. Với mỗi cặp, người rà soát kiểm tra sự phù hợp giữa input và target, các quan hệ toán học bắt buộc, phạm vi nội dung và khả năng đọc của render. Generate được đối chiếu với instruction và các mathematical givens; Edit được kiểm tra cả thay đổi yêu cầu lẫn phần nội dung cần bảo toàn; Reconstruct được đối chiếu với ảnh đầu vào. Mẫu có sai lệch được sửa và rà soát lại hoặc loại khỏi tập sử dụng. Biên dịch thành công là điều kiện thực thi, không thay thế kiểm tra nội dung toán học.
+Curation kiểm tra task input và target cùng bản render của đúng phiên bản. Cách đánh giá việc giữ mathematical information trong các hình khác nhau tham chiếu MathemaTikZ \cite{mathematikz}. Với Edit, requested change và non-target preservation được xem riêng theo yêu cầu chung của figure editing \cite{edit2tikz,editikz}. Generate được đối chiếu với instruction và nguồn. Edit thêm đối chiếu current TikZ. Reconstruct được đối chiếu với ảnh input. Compilation là điều kiện thực thi, không thay thế mathematical hoặc visual review.
 
-Quyết định chấp nhận được gắn với đúng input, target TikZ và render đã xem xét. Khi một thành phần thay đổi, cặp dữ liệu cần được rà soát lại. Provenance lưu quan hệ với bài toán nguồn và các phiên bản trước, đồng thời phân biệt kết quả sinh ban đầu, sửa bằng công cụ, sửa có hỗ trợ mô hình và sửa thủ công. Nhờ đó, việc sử dụng target cho huấn luyện không đồng nhất thành công của bước sinh mã với chất lượng của dữ liệu đã tuyển chọn.
+Review decision được gắn với exact inputs, target code và render. Nếu một thành phần thay đổi, quyết định cũ không còn đủ cho cặp mới. Preparation records phân biệt automatic completion, deterministic repair, model-assisted repair và assistant/manual curation. Candidates bị loại được lưu trong exclusion records. Resume không đưa chúng trở lại tập sử dụng. Các cặp chuyển sang Reconstruct giữ lineage và được xóa sample-specific instruction/current TikZ theo task contract.
 
-Dữ liệu được chia theo source family: mọi biến thể, bản sao và cặp Generate/Edit có chung bài toán nguồn thuộc cùng một split. Nếu một mẫu kết hợp nhiều nguồn, các nguồn liên quan được gom trong cùng nhóm chia dữ liệu. Train split cung cấp supervision; validation split phục vụ lựa chọn cấu hình và checkpoint; test split được dành cho đánh giá cuối. Các mẫu validation và test không được dùng làm ví dụ authoring hoặc repair để mở rộng train split.
+Split preparation gom mọi descendants của cùng original problem, duplicate presentations và linked Generate/Edit pairs vào một source family. Composed samples nối các parent sources vào cùng nhóm. Frozen split assignments được giữ khi re-export. Train dùng cho supervision, validation dùng cho lựa chọn cấu hình và test dành cho final assessment. Held-out sources không được dùng làm authoring demonstrations hoặc repair context để mở rộng train. Đây là biện pháp kiểm soát source leakage của project protocol, cần được kiểm tra từ lineage thay vì chỉ từ sample IDs.
 
-\subsection{Supervised fine-tuning with Qwen3.5 and Unsloth}
+\subsection{Supervised fine-tuning}
 \label{sec:fine-tuning}
-Chúng tôi xây dựng quy trình supervised fine-tuning (SFT) trên Qwen3.5, sử dụng khả năng xử lý văn bản và hình ảnh của họ mô hình này \cite{qwen35}. Unsloth cung cấp công cụ fine-tuning cho cả đầu vào text và vision \cite{unsloth35}. Mỗi mẫu được chuyển thành chuỗi hội thoại theo chat template của checkpoint: phần input chứa instruction và các thành phần theo tác vụ, còn assistant completion chứa target TikZ đã duyệt. Generate sử dụng văn bản, Edit bổ sung mã hiện tại, và Reconstruct bổ sung ảnh diagram. Cả ba tác vụ dùng chung định dạng đầu ra TikZ.
+Training dùng pretrained Qwen3.5-4B và công cụ Unsloth cho text/vision fine-tuning \cite{qwen35,unsloth35}. Mỗi conversation gồm system behavior, user task input và assistant target TikZ. Instruction-driven Generate/Edit và image-only Reconstruct giữ cùng output format, nhưng không dùng chung một tập input fields. Recipe được chuẩn bị trong notebook và thực thi trên Colab/Kaggle GPU runtime. Dataset review và diagram evaluation nằm ngoài training loop.
 
-Gọi $\mathcal{D}_{\mathrm{train}}=\{(X_i,Z_i^\star)\}_{i=1}^{N}$ là tập huấn luyện, trong đó $X_i$ là input và $Z_i^\star=(z_{i1}^\star,\ldots,z_{iT_i}^\star)$ là chuỗi token của target. Mục tiêu huấn luyện là negative log-likelihood của target có điều kiện theo input, tương ứng với mục tiêu autoregressive được dùng trong text-to-TikZ SFT \cite{tikzilla}:
+\paragraph{Autoregressive objective and loss masking}
+SFT tối ưu conditional token likelihood, như hướng text-to-TikZ training trong AutomaTikZ và TikZilla \cite{automat,tikzilla}. Để thể hiện chính xác masking, gọi $S_i=(s_{i1},\ldots,s_{iL_i})$ là serialized conversation sau processing và $\mathcal A_i$ là tập token positions được collator chọn để supervision. Objective được viết dưới dạng masked negative log-likelihood:
 \begin{equation}
-\mathcal{L}_{\mathrm{SFT}}(\theta)=
--\frac{1}{N}
-\sum_{i=1}^{N}
-\sum_{t=1}^{T_i}
-\log p_\theta(z_{it}^\star\mid X_i,z_{i,<t}^\star).
+\mathcal L_{\mathrm{SFT}}(\theta)
+=-\frac{1}{\sum_i|\mathcal A_i|}
+\sum_i\sum_{t\in\mathcal A_i}
+\log p_\theta(s_{it}\mid S_{i,<t}).
 \end{equation}
-Loss được tính trên assistant completion. Các token của instruction, mã đầu vào và biểu diễn ảnh cung cấp điều kiện cho dự đoán và được loại khỏi phần tính loss. Các mẫu huấn luyện giữ nguyên target hoàn chỉnh để tránh tạo supervision từ mã TikZ bị cắt mất phần kết thúc.
+Với response-only masking, $\mathcal A_i$ gồm assistant completion tokens. Input chỉ cung cấp điều kiện. Colab baseline notebook cấu hình rõ response-only và completion-only loss. Notebook \texttt{Train.ipynb} dùng default vision collator để supervise conversation text, với image/padding tokens được mask. Vì hai recipes khác nhau, báo cáo mỗi experiment phải ghi notebook, data snapshot và masking đã thực thi. Không quy mọi run về assistant-only loss. Cả hai quy trình đều kiểm tra target đầy đủ trong context limit và dừng khi không phù hợp, thay vì âm thầm cắt mã TikZ.
 
-Thiết kế fine-tuning sử dụng Low-Rank Adaptation (LoRA), giữ cố định trọng số nền và học các cập nhật hạng thấp \cite{lora}. Unsloth thực hiện việc gắn và tối ưu các adapters cho Qwen3.5 \cite{unsloth35}. Việc lựa chọn cấu hình và checkpoint dựa trên validation split; mô hình được chọn sau đó sinh output cho test inputs. Các output này được chuyển sang phương pháp đánh giá tại Mục~\ref{sec:evaluation}, với cùng điều kiện biên dịch và ngân sách sinh/sửa được quy định trong protocol thực nghiệm.
+\paragraph{Low-Rank Adaptation and run configuration}
+LoRA giữ pretrained weights cố định và học low-rank updates \cite{lora}. Với một weight matrix $W_0\in\mathbb R^{d\times k}$, dạng cập nhật thông dụng là
+\begin{equation}
+W=W_0+\frac{\alpha}{r}BA,\qquad
+B\in\mathbb R^{d\times r},\quad A\in\mathbb R^{r\times k}.
+\end{equation}
+$A,B$ là trainable matrices, $r$ là adapter rank và $\alpha$ là scaling parameter. Các notebooks dùng Unsloth để gắn adapters vào vision/language attention và MLP modules \cite{unsloth35}. Cấu hình hiện đặt $r=16$, $\alpha=16$, dropout bằng 0 và giữ base weights frozen. Đây là áp dụng LoRA, không phải một adaptation algorithm mới của dự án.
 
-\subsection{Evaluation}
+Model revision, library versions, seed, dataset fingerprints, task exposure, context length và optimizer settings được lưu cùng run artifacts. \texttt{Train.ipynb} có recipe mặc định 80 steps, learning rate $2\times10^{-4}$, batch size 2, gradient accumulation 4 và context limit 2,048 tokens. Colab baseline có cấu hình riêng. Các giá trị này mô tả recipe, không xác nhận một kết quả model-quality đã đạt. Prediction export giữ exact output, target và row identity. Targets bị loại khỏi inference prompts. Checkpoint selection dùng validation, còn diagram scores được tính ngoại tuyến theo mục tiếp theo.
+
+\subsection{Offline diagram evaluation}
 \label{sec:evaluation}
-\subsubsection{Evaluation objectives and principles}
+\subsubsection{Evaluation contract and observation pipeline}
+Evaluation tách execution validity, mathematical relations, required content và label readability. Việc tách semantic representation khỏi rule-based checks kế thừa DiagramIR \cite{ref2}. Dự án thay LLM back-translation bằng observations từ executed PDF và PGF. Những lựa chọn về canonical units, penalties và scope dưới đây mô tả evaluator của dự án, không phải các metrics được sao chép nguyên dạng từ DiagramIR.
 
-Đánh giá hình vẽ toán học cần phân biệt khả năng thực thi mã, tính đúng của các quan hệ hình học, mức độ đầy đủ của nội dung và khả năng đọc hình. Các công trình về sinh TikZ như TikZero sử dụng nhiều thước đo cho độ tương đồng hình ảnh và mã nguồn \cite{ref1}. Tuy nhiên, đối với hình học, cùng một hệ quan hệ có thể được biểu diễn bằng nhiều cấu hình khác nhau. Vì vậy, độ giống nhau về hình dạng hoặc chuỗi lệnh không đủ để xác định tính đúng toán học.
-
-Phương pháp này đánh giá hình vẽ thông qua các đối tượng và quan hệ quan sát được sau khi thực thi TikZ. Cách tách biểu diễn hình học khỏi phép kiểm tra cũng được sử dụng trong DiagramIR, nơi LLM chuyển TikZ sang một biểu diễn trung gian để áp dụng các kiểm tra theo quy tắc \cite{ref2}. Ở đây, biểu diễn được trích xuất trực tiếp từ PDF và thông tin thực thi PGF; việc tính điểm sử dụng các phép kiểm tra tất định.
-
-Với mã tham chiếu $T=\texttt{target\_tikz}$ và mã do mô hình sinh $O=\texttt{output\_tikz}$, hàm đánh giá trả về
-
+Với $T=\texttt{target\_tikz}$ và $O=\texttt{output\_tikz}$, evaluator nhận đúng hai chương trình, không nhận instruction, source text hay per-case rubric. Khi các phép đo đều khả dụng,
 \begin{equation}
-\operatorname{Eval}(T,O)=(C,M,K,V),
-\qquad C\in\{0,1\},\quad M,K,V\in[0,100].
+\operatorname{Eval}(T,O)=(C,M,K,V),\qquad
+C\in\{0,1\},\quad M,K,V\in[0,100].
 \end{equation}
+$C,M,K,V$ lần lượt là Compile, Mathematical correctness, Content coverage và Visual readability. Target cung cấp observed relations và content để so sánh. Source fidelity và input--target alignment được xác lập ở curation. Cùng contract áp dụng cho cả ba tasks, nên điểm số không tự xác nhận edit intent hay yêu cầu chỉ xuất hiện trong instruction.
 
-Bốn thành phần lần lượt là \textbf{Compile}, \textbf{Mathematical correctness}, \textbf{Content coverage} và \textbf{Visual readability}. Target xác định các quan hệ và nội dung cần đối chiếu; bộ đánh giá không yêu cầu tọa độ tuyệt đối hoặc cách viết lệnh của output trùng với target. Cùng một phương pháp được áp dụng cho Generate, Edit và Reconstruct.
+Hai chương trình được biên dịch với cùng wrapper/compiler để tạo observed scenes $X_T,X_O$. PyMuPDF cung cấp vector paths và drawing properties của PDF \cite{pymupdf}. Evaluator dùng measured paths để nhận diện straight carriers, circular paths và line styles. Text và glyph outlines cung cấp label identities, vùng mực và page bounds để kiểm tra readability. Đây là bằng chứng của nội dung thực sự được vẽ, khác với source-pattern matching chỉ tìm lệnh trong TikZ.
 
-\subsubsection{Representation extraction from execution outputs}
-
-Hai mã TikZ được xử lý bằng cùng wrapper và compiler để thu được các biểu diễn quan sát $X_T$ và $X_O$. Mỗi biểu diễn gồm các điểm có định danh và vị trí, đường đã vẽ, kiểu nét, đường tròn, nhãn văn bản và vùng mực của ký tự. Hình~\ref{fig:evaluation-pipeline} mô tả vai trò của hai nguồn bằng chứng trong quá trình này.
+Nonpainting PGF probes ghi node bounds và label attachment positions tại runtime, dựa trên cơ chế coordinates/nodes của PGF/TikZ \cite{pgfnodes}. Probe là instrumentation của dự án, không phải một khả năng tự động verification của PGF. Probe được chấp nhận khi compilation thành công, log đầy đủ, cùng toolchain và PNG byte-identical với render gốc. Label binding kết hợp PDF text với runtime attachment positions để phân biệt điểm $A$ với vị trí chữ $A$ được đặt lệch bên cạnh. Vị trí đã bind là input của phép kiểm tra, không tự xác nhận quan hệ toán học. Hình~\ref{fig:evaluation-pipeline} thể hiện luồng observation và scoring.
 
 \begin{figure}[tbp]
 \centering
@@ -482,7 +493,7 @@ Hai mã TikZ được xử lý bằng cùng wrapper và compiler để thu đư�
 \node[title] at ([xshift=6pt,yshift=16pt]readability.west) {Visual readability};
 \node[detail,text width=4.25cm] at ([xshift=6pt,yshift=-8pt]readability.west)
   {Output label collisions\\and clipping\\
-   {\fontsize{7.2}{9}\selectfont Target-guided carrier filtering}};
+   {\fontsize{7.2}{9}\selectfont Output carrier filtering}};
 \node[score] at ([xshift=-6pt,yshift=-6pt]readability.east) {0--100\%};
 
 \draw[flow] (compilefork) -- (3.48,9.9) -- (12.08,9.9) |- (compile.west);
@@ -504,125 +515,87 @@ Hai mã TikZ được xử lý bằng cùng wrapper và compiler để thu đư�
 \label{fig:evaluation-pipeline}
 \end{figure}
 
-\textbf{PDF observations.} PDF cung cấp các vector paths, kiểu nét liền hoặc đứt, độ dày nét, văn bản và giới hạn trang. Các paths cho biết đoạn thẳng hoặc đường tròn nào thực sự được vẽ. Glyph outlines xác định vùng mực của chữ, phục vụ kiểm tra nhãn giao với nét vẽ, chồng lên nhãn khác hoặc bị cắt khỏi trang. Nhờ đó, sự hiện diện của đối tượng được xác định từ kết quả hiển thị.
-
-\textbf{PGF probe và label binding.} PGF probe ghi nhận vị trí node và điểm gắn nhãn khi TikZ thực thi, không bổ sung nét vẽ. Thông tin này giải quyết sự khác biệt giữa vị trí của điểm toán học và vị trí chữ dùng để đặt tên điểm: nhãn $A$ thường được đặt lệch khỏi điểm $A$ để tránh che hình. Văn bản đọc từ PDF được ghép với vị trí ghi nhận từ PGF và quy về hệ tọa độ PDF. Probe chỉ được chấp nhận khi biên dịch thành công, có nhật ký đầy đủ, dùng cùng toolchain và tạo PNG trùng từng byte với bản gốc.
-
-PDF và PGF có vai trò bổ sung: PDF xác định nội dung đã hiển thị; PGF hỗ trợ xác định vị trí gắn nhãn. Các vị trí này là dữ liệu cho phép kiểm tra quan hệ, không tự tạo thành một kết luận về tính đúng toán học. Một liên kết nhãn không xác định được duy nhất không được coi là bằng chứng đạt.
-
-\subsubsection{Evaluation metrics}
-
-\paragraph{Compile và Compile rate}
-
-Với mẫu thứ $i$, đặt $C_i=1$ nếu output vượt qua kiểm tra đầu vào và biên dịch thành công; ngược lại $C_i=0$. Compile rate trên tập gồm $N$ mẫu là
-
+\subsubsection{Scoring units and aggregation}
+\paragraph{Compile and failure semantics}
+Với output thứ $i$, $C_i=1$ nếu input validation và compilation thành công, ngược lại $C_i=0$. Trên $N_C$ outputs có compile outcome xác định,
 \begin{equation}
-\operatorname{CompileRate}
-=\frac{100}{N}\sum_{i=1}^{N}C_i.
+\operatorname{CompileRate}=\frac{100}{N_C}\sum_{i=1}^{N_C}C_i.
 \end{equation}
-
-Compile đo khả năng tạo ra một hình có thể đánh giá, không xác nhận tính đúng của hình. Nếu output không biên dịch được, cả bốn điểm của mẫu bằng 0. Target không hợp lệ hoặc lỗi hạ tầng biên dịch không được quy thành lỗi chất lượng của mô hình và cần được xử lý trước khi tổng hợp kết quả.
+Compile failure của output cho cả bốn điểm bằng 0. Target không hợp lệ, measurement không khả dụng hoặc compiler/probe infrastructure failure được ghi riêng. Chúng không được thay bằng model-quality scores giả định. Các metrics đã hoàn tất được giữ lại, metrics chưa thể đo có giá trị \texttt{null}. Khi tổng hợp batch, mỗi metric dùng số rows có điểm của chính metric đó và báo rõ errors/pending rows, thay vì chỉ lấy các rows hoàn tất cả bốn phép đo.
 
 \paragraph{Mathematical correctness}
-
-Mathematical correctness đo mức độ bảo toàn các quan hệ hình học được suy ra từ target. Gọi $R_T=(r_1,\ldots,r_m)$ là danh sách đơn vị quan hệ cần kiểm tra. Khi $m>0$,
-
+Gọi $R_T=(r_1,\ldots,r_m)$ là các canonical target relation units và $b_O$ là số detected false hoặc unresolved output relation marks. Khi $m+b_O>0$,
 \begin{equation}
-M(T,O)=
-\frac{100}{m}\sum_{j=1}^{m}
-\mathbf 1\!\left[r_j(X_O)\text{ đạt}\right].
+M(T,O)=100\,
+\frac{\sum_{j=1}^{m}\mathbf 1[r_j(X_O)\text{ đạt}]}
+{m+b_O}.
 \end{equation}
-
-Mỗi đơn vị có trọng số bằng nhau. Danh sách quan hệ và mẫu số được xác định từ target; việc thiếu điểm hoặc thiếu bằng chứng trong output làm các đơn vị liên quan không đạt, không làm giảm mẫu số. Các điều kiện được kiểm tra bằng sai số số học tương đối, thay vì yêu cầu tọa độ bằng nhau tuyệt đối.
+Mỗi unit có trọng số bằng nhau. Thiếu output evidence làm unit tương ứng không đạt, không giảm target denominator. Degeneracy được kiểm tra trong từng relation: midpoint segment hoặc angle arm có độ dài bằng 0 không thỏa yêu cầu đó. Distinct point pairs không được thêm hàng loạt vào denominator để làm loãng một quan hệ sai. Nếu không có extracted relations nhưng có named points, evaluator dùng một fallback unit về point presence và configuration dimension. Không có unit để chấm thì điểm bằng 0.
 
 \begin{table}[tbp]
 \centering\small
-\caption{Các đơn vị quan hệ dùng cho Mathematical correctness.}
+\caption{Canonical relation units trong evaluator hiện tại. Các checks chỉ áp dụng cho supported observations và unique label/mark bindings.}
 \label{tab:relations}
-\renewcommand{\arraystretch}{1.18}
-\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{.27\linewidth} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{.20\linewidth}@{}}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{.30\linewidth} >{\raggedright\arraybackslash}X@{}}
 \toprule
-Quan hệ quan sát trên target & Yêu cầu đối với output & Đơn vị tính điểm \\
+\textbf{Target observation} & \textbf{Unit và yêu cầu trên output} \\
 \midrule
-Cặp điểm có định danh & Giữ trạng thái phân biệt hoặc trùng nhau & Mỗi cặp điểm \\
-Bộ ba thẳng hàng & Giữ tính thẳng hàng và quan hệ trung điểm nếu có & Mỗi bộ ba \\
-Các bộ ba không thẳng hàng & Giữ tính không suy biến & Một điều kiện chung \\
-Điểm thuộc đoạn đã vẽ & Giữ quan hệ thuộc đoạn và giới hạn hai đầu mút & Mỗi quan hệ \\
-Hai đường chứa đoạn thẳng song song, phân biệt & Giữ tính song song và quan hệ vector bằng nhau đến dấu nếu có & Mỗi cặp đường \\
-Dấu góc vuông dạng ô vuông & Các tia tương ứng vẫn vuông góc & Mỗi góc được đánh dấu \\
-Đường tròn đầy đủ & Giữ các quan hệ tâm, điểm thuộc đường tròn, bán kính bằng độ dài giữa hai điểm và tiếp tuyến đã nhận diện & Một đơn vị tổng hợp cho mỗi đường tròn \\
+Named point coincidences & Một unit cho mỗi tập điểm trùng được quan sát. \\
+Maximal named line & Một unit cho collinearity và strict interior containment trong painted segments. Không cố định toàn bộ thứ tự của free feet. \\
+Midpoint & Một unit cho mỗi midpoint và endpoint pair, có nondegeneracy guard. \\
+Parallel painted carriers & Một unit cho mỗi direction group. Thêm unit cho từng observed equal-vector group. \\
+Square corner mark & Một perpendicularity unit cho mỗi marked angle được bind. \\
+Matching segment ticks & Một equal-length unit cho mỗi class of marked named segments. \\
+Full circle & Một composite unit gồm supported center, boundary, radius-segment và tangent relations. \\
+Circular arc & Một composite unit cho circle relations trên painted interval, named endpoints, boundary-point order và minor/semicircle/major branch. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Các đường tròn được ghép một-một theo quan hệ hình học. Do đó, thay đường tròn $(C,CM)$ bằng $(C,CN)$ làm sai đơn vị quan hệ tương ứng khi $CM\ne CN$, dù số lượng đường tròn không thay đổi. Tương tự, một đường cao vẫn có thể hiện diện đầy đủ nhưng không đạt Mathematical correctness nếu mất quan hệ vuông góc đã được target thể hiện.
+Circular paths được ghép một-một giữa target và output, với tối đa 12 đối tượng mỗi phía. Co-circular intervals cùng line style được gộp để path splitting không tạo thêm units. Open arcs cần named endpoints và độ mở ít nhất $15^\circ$ trong scope hiện tại. Phép đo dựa trên painted circular interval. TikZ arc syntax chỉ xác định lệnh vẽ, không thay cho measured geometry \cite{tikzpaths}. Reference marks mâu thuẫn geometry hoặc không bind duy nhất làm phép đo liên quan unavailable. Unresolved hoặc false output marks thêm failed units.
 
 \paragraph{Content coverage}
-
-Content coverage đo sự hiện diện của các thành phần cần biểu diễn: định danh điểm, kết nối thẳng cực đại và đường tròn. Một kết nối cực đại là nét nối giữa các điểm có định danh sau khi gộp các đoạn con thẳng hàng cùng kiểu nét; cách chia nét thành nhiều lệnh TikZ không tạo thêm đơn vị nội dung.
-
-Gọi $U_T$ là danh sách đơn vị nội dung của target, $c_u(X_O)\in\{0,1\}$ cho biết đơn vị $u$ hiện diện hợp lệ trong output, và $e_O$ là số đơn vị phạt cho nội dung thừa hoặc đối tượng chưa được hỗ trợ. Khi mẫu số khác 0,
-
+Gọi $U_T$ là tập target content units, $c_u(X_O)\in\{0,1\}$ là việc unit $u$ hiện diện trong output và $e_O$ là số extra/unsupported content units. Khi denominator dương,
 \begin{equation}
 K(T,O)=100\,
-\frac{\sum_{u\in U_T}c_u(X_O)}
-{|U_T|+e_O}.
+\frac{\sum_{u\in U_T}c_u(X_O)}{|U_T|+e_O}.
 \end{equation}
+Units gồm point identities, maximal connections, full circles, circular arcs, marked angles và segment-equality classes. Connections và curves cần giữ solid/dashed style. Maximal connections được gộp từ painted segments cùng style, nên chia một nét thành nhiều TikZ commands không tạo thêm nội dung. Extra objects, unsupported objects và extra mark classes thêm failed units. Không có unit thì điểm bằng 0.
 
-Điểm được xét theo khả năng nhận diện và liên kết nhãn; kết nối và đường tròn còn phải giữ kiểu nét liền hoặc đứt. Việc ghép đường tròn được dùng chung với bước kiểm tra hình học, sau đó mới xét kiểu nét cho Content coverage.
-
-Chỉ số này phân biệt thiếu nội dung với sai quan hệ. Nếu xóa nét $MN$ nhưng vẫn giữ hai điểm $M,N$ và các quan hệ của chúng, Content coverage giảm trong khi những quan hệ toán học còn được biểu diễn có thể vẫn đạt. Ngược lại, một đường tròn sai bán kính có thể được tính là hiện diện về nội dung nhưng không đạt Mathematical correctness. Khi không có đơn vị để chấm, Mathematical correctness và Content coverage được quy ước bằng 0.
+Mark presence và mathematical truth được xét riêng. Một square corner còn hiện diện nhưng vẽ oblique có thể giữ coverage trong khi không thỏa perpendicularity. Xóa ticks làm thiếu visible content. Quan hệ equal length mà target xác định vẫn có thể đạt trên measured coordinates. Thay circle $(C,CM)$ bằng $(C,CN)$ khi $CM\ne CN$ có thể giữ một circle về content nhưng sai composite mathematical unit. Các ví dụ này giải thích ý nghĩa của metric separation, không thay cho calibration của observer.
 
 \paragraph{Visual readability}
-
-Visual readability đánh giá khả năng đọc các nhãn văn bản trên output. Với tập nhãn được chấm $L_O$, đặt $v_\ell(T,O)=1$ khi glyph outlines của nhãn $\ell$ được xác định và không phát hiện va chạm với nét vẽ, chồng chữ hoặc cắt khỏi trang; ngược lại bằng 0. Khi $|L_O|>0$,
-
+Với scored output text labels $L_O$, đặt $v_\ell(O)=1$ khi glyph outlines của label $\ell$ xác định được và không phát hiện stroke/text collision, text overlap hoặc clipping. Label có lỗi đo được nhận 0. Khi $|L_O|>0$,
 \begin{equation}
-V(T,O)=
-\frac{100}{|L_O|}
-\sum_{\ell\in L_O}v_\ell(T,O).
+V(T,O)=\frac{100}{|L_O|}\sum_{\ell\in L_O}v_\ell(O).
 \end{equation}
+Mỗi affected label chỉ tính một lần, dù có nhiều collisions. Bar-only equality marks không tham gia denominator. Không có scored text thì điểm bằng 100. Nếu glyph measurement chưa xác định được, readability là unavailable, không phải một label failure giả định. Carrier filtering và collision measurements dùng output scene. Target không áp đặt vị trí nhãn cho chỉ số này.
 
-Mỗi nhãn chỉ bị trừ tối đa một đơn vị dù có nhiều va chạm. Các nhãn chỉ gồm ký tự \mbox{\texttt{|}, $\mid$ hoặc $\Vert$} được xem là ký hiệu bằng nhau và không tham gia mẫu số; nếu không còn nhãn cần chấm, điểm bằng 100. Việc lọc các đường chứa đoạn thẳng (\emph{carriers}) trong output có tham chiếu tập kết nối của target, nhưng các nhãn được chấm đều thuộc output.
+Các numeric labels tham gia readability như văn bản, nhưng evaluator không tự suy ra fixed length/angle requirements từ nội dung chữ hoặc arbitrary coordinate constants. Vì vậy, readability cao không xác nhận correctness của các giá trị in trên hình, và supported mathematical checks đạt không xác nhận đầy đủ original problem.
 
-Tách Visual readability khỏi hai chỉ số hình học cho phép đặt nhãn ở vị trí khác target để tăng khả năng đọc mà không làm thay đổi nội dung toán học. Văn bản ghi độ dài được xét như nhãn trong phép đo này; các giá trị số trong văn bản không được tự động diễn giải thành ràng buộc toán học.
+\subsubsection{Geometric invariance and scope}
+Các đẳng thức dưới đây trình bày elementary geometric facts để giải thích vì sao comparison không cần exact-coordinate matching. Đây là cơ sở toán học cho scope của các checks, không phải các định lý mới của dự án và không chứng minh extractor accuracy.
 
-\subsubsection{Geometric foundations of comparison}
-
-\paragraph{Bất biến đối với hệ tọa độ}
-
-Với tập quan hệ không rỗng $R_T$, tập cấu hình đáp ứng target được định nghĩa bởi
-
+\paragraph{Similarity transformations}
+Với observed target predicates $R_T$, đặt
 \begin{equation}
-\mathcal S_T=
-\{X:\ r_j(X)=\mathrm{true}\ \text{với mọi }r_j\in R_T\}.
+\mathcal S_T=\{X:\ r(X)=\mathrm{true}\ \text{với mọi }r\in R_T\}.
 \end{equation}
-
-Mục tiêu của Mathematical correctness là xác định mức độ output thỏa các quan hệ này. Tọa độ dùng để tính quan hệ, nhưng bản thân các giá trị tọa độ không phải đáp án cần khớp.
-
-Xét phép biến đổi $f(P)=sQP+t$, trong đó $s>0$, $Q^\top Q=I$ và $t$ là vector tịnh tiến. Khi đó,
-
+Tọa độ dùng để tính predicates. Việc thuộc solution set không yêu cầu cùng tọa độ với target. Xét $f(P)=sQP+t$ với $s>0$ và $Q^\top Q=I$. Ta có
 \begin{equation}
-\|f(P)-f(C)\|=s\|P-C\|,
-\qquad
+\|f(P)-f(C)\|=s\|P-C\|,\qquad
 (sQu)\cdot(sQv)=s^2(u\cdot v).
 \end{equation}
+Do đó translation, rotation, reflection và uniform scaling bảo toàn distance ratios, perpendicularity, circles, tangency và affine dependencies. PGF/TikZ cung cấp các coordinate transformations tương ứng \cite{ref4}. Citation này quy nguồn cho drawing operations, còn các đẳng thức được trình bày trực tiếp từ định nghĩa. Nonuniform scaling có thể biến circle thành ellipse và thay đổi right angles, nên không có cùng metric invariance. Trong implementation, các quan hệ được kiểm tra với numerical tolerances, không bằng exact arithmetic.
 
-Phép biến đổi bảo toàn tỉ số độ dài, tính vuông góc, đường tròn và tiếp xúc, đồng thời bảo toàn thẳng hàng, trung điểm và song song. Vì vậy, tịnh tiến, quay, phản xạ và uniform scaling giữ nguyên các quan hệ được xét ở mức hình học chính xác. Trong TikZ, uniform scaling được biểu diễn bằng \texttt{scale=s} hoặc \texttt{xscale=s,yscale=s} \cite{ref4}. Hai hệ số khác nhau có thể làm đường tròn thành ellipse và thay đổi góc vuông, nên không có cùng tính bất biến.
-
-\paragraph{Nhiều cấu hình hợp lệ không nhất thiết đồng dạng}
-
-Tập $\mathcal S_T$ có thể chứa các hình không đồng dạng. Điều quyết định là các điểm phụ thuộc được dựng lại theo cùng quan hệ khi thay đổi điểm tự do. Cách mô hình hóa bằng điểm tự do, điểm phụ thuộc và ràng buộc cũng xuất hiện trong GeoLoom \cite{ref3}.
-
-Chẳng hạn, xét tam giác $ABC$ không suy biến và dựng $M,N$ lần lượt là trung điểm của $AB,AC$. Khi đó,
+\paragraph{Free and dependent points}
+Sự phân biệt free/dependent points cũng được dùng trong generation-oriented geometry representations như GeoLoom \cite{ref3}. Để minh họa bằng một construction quen thuộc, lấy tam giác $ABC$ không suy biến và đặt
 \begin{equation}
-M=\frac{A+B}{2},\qquad
-N=\frac{A+C}{2},\qquad
+M=\frac{A+B}{2},\qquad N=\frac{A+C}{2},\qquad
 N-M=\frac{C-B}{2}.
 \end{equation}
-Hai đẳng thức đầu xác định các điểm phụ thuộc; đẳng thức cuối cho $MN\parallel BC$ và $MN/BC=1/2$. Khi thay đổi đỉnh $A$ và dựng lại $M,N$, các quan hệ này tiếp tục được bảo toàn dù góc và tỉ số giữa các cạnh của tam giác có thể thay đổi.
-
-Hình~\ref{fig:valid-configurations} minh họa hai cấu hình có tỉ số $AB/AC$ khác nhau, nên không đồng dạng theo sự tương ứng của các đỉnh có nhãn. Cả hai vẫn thỏa cùng các định nghĩa trung điểm và quan hệ đường trung bình. Ví dụ này xét tập quan hệ nêu trong hình; để thuộc $\mathcal S_T$, output còn phải thỏa các quan hệ khác được trích xuất từ target, nếu có.
+Hai đẳng thức đầu xác định midpoints. Đẳng thức cuối cho $MN\parallel BC$ và $MN/BC=1/2$. Khi thay đổi free vertex $A$ và dựng lại $M,N$, những relations này vẫn đúng dù triangle shape thay đổi. Hình~\ref{fig:valid-configurations} minh họa hai cấu hình không đồng dạng. Ví dụ chỉ xác lập các relations đã nêu. Một output thuộc $\mathcal S_T$ còn phải thỏa mọi predicates khác được trích xuất từ target, kể cả các quan hệ incidental nếu có.
 
 \begin{figure}[tbp]
 \centering
@@ -671,32 +644,29 @@ font=\small\sffamily\bfseries,inner sep=2pt] (panelcaption) at (2,-.7)
 \label{fig:valid-configurations}
 \end{figure}
 
-
-\paragraph{Quan hệ không gian trong biểu diễn 2D}
-
-Với phép chiếu affine $\pi(P)=LP+t$ từ $\mathbb R^3$ xuống $\mathbb R^2$, các tổ hợp affine được bảo toàn:
-
+\paragraph{Affine projection of spatial dependencies}
+Mô hình orthographic projection tuyến tính đã được trình bày trong computer vision, chẳng hạn Tomasi và Kanade \cite{tomasi1992}. Ở đây chỉ dùng affine projection để giải thích việc giữ constructive dependencies, không áp dụng factorization algorithm của công trình đó. Với $\pi(P)=LP+t$, $L\in\mathbb R^{2\times3}$ có rank 2,
 \begin{equation}
 \pi\!\left(\sum_i\alpha_iP_i\right)
-=\sum_i\alpha_i\pi(P_i),
-\qquad \sum_i\alpha_i=1.
+=\sum_i\alpha_i\pi(P_i),\qquad \sum_i\alpha_i=1.
 \end{equation}
-
-Đẳng thức suy ra bằng cách phân phối $L$ và sử dụng $\sum_i\alpha_i=1$ cho thành phần tịnh tiến. Vì vậy, quan hệ trung điểm, thuộc đoạn, song song và vector bằng nhau có thể được kiểm tra trên hình chiếu khi các đối tượng liên quan không bị suy biến.
-
-Ví dụ, hình chiếu của lăng trụ có thể được xác định bởi $A,B,C,d\in\mathbb R^2$ với $A'=A+d$, $B'=B+d$, $C'=C+d$. Nếu $M=B+d/2$, $N=C+d/2$, $H=2B-A$ và $K=2C-A$, ta luôn có
-
+Đẳng thức suy ra bằng cách phân phối $L$ và gom translation term. Midpoints, incidence, segment membership và equal-vector/parallel dependencies được bảo toàn khi những đối tượng liên quan không collapse trong projection. Chẳng hạn, hình chiếu của lăng trụ có thể đặt $A'=A+d$, $B'=B+d$, $C'=C+d$. Với $M=B+d/2$, $N=C+d/2$, $H=2B-A$, $K=2C-A$,
 \begin{equation}
-2M=B+B'=A'+H,\qquad
-2N=C+C'=A'+K.
+2M=B+B'=A'+H,\qquad 2N=C+C'=A'+K.
 \end{equation}
+Các dependencies này kiểm tra được bằng projected points. Tuy nhiên, $\pi$ không khả nghịch: với $v\ne0$ thuộc $\ker L$, $\pi(P+v)=\pi(P)$. Vì thế 2D evidence không xác lập general spatial lengths, angles hoặc hidden incidence. Perspective projection cũng cần invariants khác.
 
-Các hệ thức này vẫn đúng khi thay đổi những điểm tự do. Bộ đánh giá do đó có thể kiểm tra các phụ thuộc được biểu diễn bằng điểm 2D mà không cần khôi phục toàn bộ tọa độ XYZ. Tuy nhiên, phép chiếu không khả nghịch: với $v\ne0$ thuộc $\ker L$, $\pi(P+v)=\pi(P)$. Các quan hệ đã kiểm tra trên hình chiếu không xác định duy nhất độ dài, góc hoặc cấu trúc không gian ẩn của vật thể.
+Spatial authoring có thể kiểm tra solved XYZ witness khi witness được bind với declared projection và actual PDF points. Đó là preparation check riêng. XYZ không phải input của offline evaluator hai TikZ. Một spatial right-angle mark vẽ oblique trên projection có thể đúng trong 3D nhưng làm screen-space mathematical measurement unavailable. Không quy trường hợp đó thành model failure hoặc xem spatial authoring support là complete spatial evaluation.
+
+\paragraph{Calibration and supported observations}
+Trước model comparison, target được kiểm tra bằng self-comparison, rồi calibration với valid variants và deliberate failures. Positive controls gồm similarity transforms, dependency-preserving shape changes và projected prism constructions. Negative controls gồm broken incidence, changed radius/arc branch, missing connections/marks và label collisions. Self-comparison xác nhận evaluator có thể xử lý reference, không xác nhận source fidelity. Các controls kiểm tra expected behavior của từng observation và predicate.
+
+Scope hiện tại gồm labeled points, straight solid/dashed segments, full circles, supported circular arcs, square corner marks và segment-equality ticks có resolved carriers. General conics/curves, filled-region semantics, custom relation symbols, unmarked metric givens và printed numerical values nằm ngoài mathematical scoring. Equal-angle arcs và numerical angle requirements có thể được kiểm tra riêng ở authoring, nhưng không được tuyên bố là offline metric constraints. Điểm 100 chỉ có nghĩa mọi supported extracted units đạt. Correctness theo instruction và pedagogical usefulness vẫn cần evidence ngoài phép chấm này.
 
 \section{Dataset}
 \label{sec:dataset}
 \subsection{Data sources and scope}
-Dữ liệu được tổ chức thành ba tác vụ Generate, Edit và Reconstruct. Generate và Edit sử dụng các yêu cầu hình học được biên soạn từ nguồn đã tuyển chọn, trong đó corpus SGK/SGV lớp 6--12 thuộc bộ \emph{Kết nối tri thức với cuộc sống} cung cấp phát biểu, mathematical givens và ngữ cảnh dựng hình. Các ví dụ, luyện tập và bài tập được xem như đơn vị nội dung hoàn chỉnh, bao gồm các tiểu ý xác định thêm đối tượng hoặc đường phụ. Taxonomy hình học gồm 17 mã G01--G17 được sử dụng trong khâu tuyển chọn và phân tích độ bao phủ nguồn.
+Dữ liệu được tổ chức thành ba tác vụ Generate, Edit và Reconstruct. Generate và Edit sử dụng các yêu cầu hình học được biên soạn từ nguồn đã tuyển chọn, trong đó corpus SGK/SGV lớp 6--12 thuộc bộ \emph{Kết nối tri thức với cuộc sống} cung cấp phát biểu, mathematical givens và ngữ cảnh dựng hình. Các ví dụ, luyện tập và bài tập được xem như đơn vị nội dung hoàn chỉnh, bao gồm các tiểu ý xác định thêm đối tượng hoặc đường phụ.
 
 Reconstruct sử dụng các cặp ảnh--TikZ từ snapshot Geo3K-TikZ \cite{geo3ktikz}. Trong bản export này, ảnh đầu vào là \texttt{rendered\_image} của nguồn, còn target giữ mã TikZ tương ứng. Do đó, nhánh Reconstruct cung cấp supervision cho ánh xạ từ hình đã render sang chương trình đồ họa; nguồn dữ liệu này được phân biệt với các bài toán SGK/SGV dùng để biên soạn Generate và Edit.
 
@@ -723,7 +693,7 @@ Edit & 795 & 97 & 97 & 989\\
 Nhánh Reconstruct giữ các bản ghi trùng từ nguồn và chứa 2,238 định danh ảnh khác nhau. Một bản ghi trong train split thiếu ảnh đầu vào; bản ghi này được tính trong Bảng~\ref{tab:dataset-splits} nhưng cần loại khi chuẩn bị image-to-TikZ training, còn 1,466 mẫu Reconstruct train có ảnh. Số bản ghi export vì vậy được phân biệt với số mẫu đủ đầu vào cho từng cấu hình huấn luyện.
 
 \subsection{Record format and provenance}
-Bản export sử dụng ba configurations tương ứng với tác vụ. Mỗi configuration có các tệp train, validation và test riêng; các trường đầu vào được giữ theo định nghĩa tác vụ tại Mục~\ref{sec:tasks}. Bảng~\ref{tab:dataset-fields} mô tả schema thực tế. Trong Generate, \texttt{current\_tikz} có giá trị null ở toàn bộ bản ghi. Trong Edit, trường này chứa mã của hình trước khi chỉnh sửa. Reconstruct lưu ảnh trực tiếp trong Parquet và không có trường instruction riêng; yêu cầu khôi phục được quy định ở task template.
+Bản export sử dụng ba configurations tương ứng với tác vụ. Mỗi configuration có các tệp train, validation và test riêng; các trường đầu vào được giữ theo định nghĩa tác vụ tại Mục~\ref{sec:tasks}. Bảng~\ref{tab:dataset-fields} mô tả schema thực tế. Trong Generate, \texttt{current\_tikz} có giá trị null ở toàn bộ bản ghi. Trong Edit, trường này chứa mã của hình trước khi chỉnh sửa. Reconstruct lưu ảnh trực tiếp trong Parquet và không có trường instruction riêng; yêu cầu khôi phục được quy định ở system message.
 
 \begin{table}[tbp]
 \centering
@@ -1039,11 +1009,11 @@ Bước tiếp theo là hoàn thiện targets đã duyệt, tổ chức held-out
 
 \bibitem{automat} Belouadi, J., Lauscher, A., và Eger, S. \emph{AutomaTikZ: Text-Guided Synthesis of Scientific Vector Graphics with TikZ}. ICLR, 2024. \href{https://arxiv.org/abs/2310.00367}{arXiv:2310.00367}.
 
-\bibitem{mathematikz} Malik, R., Hao, R. L., Kacholia, R., và Demszky, D. \emph{MathemaTikZ: A Benchmark for K-12 Mathematical Diagram Generation}. 2025. \href{https://www.dorademszky.com/publications/49731.pdf}{Author manuscript}.
+\bibitem{mathematikz} Malik, R., Hao, R. L., Kacholia, R., và Demszky, D. \emph{MathemaTikZ: A Dataset and Benchmark for Mathematical Diagram Generation}. Proceedings of the Twelfth ACM Conference on Learning @ Scale, 95--104, 2025. \href{https://doi.org/10.1145/3698205.3729558}{DOI:10.1145/3698205.3729558}; \href{https://www.dorademszky.com/publications/49731.pdf}{Author manuscript}.
 
 \bibitem{tikzilla} Greisinger, C., và Eger, S. \emph{TikZilla: Scaling Text-to-TikZ with High-Quality Data and Reinforcement Learning}. ICLR, 2026. \href{https://arxiv.org/abs/2603.03072}{arXiv:2603.03072}.
 
-\bibitem{ref1} Belouadi, J. và cộng sự. \emph{TikZero: Zero-Shot Text-Guided Graphics Program Synthesis}. 2025. Mục 5, Evaluation Metrics. \href{https://arxiv.org/html/2503.11509v1#S5}{arXiv:2503.11509v1}.
+\bibitem{ref1} Belouadi, J. và cộng sự. \emph{TikZero: Zero-Shot Text-Guided Graphics Program Synthesis}. ICCV, 2025. \href{https://arxiv.org/abs/2503.11509v3}{arXiv:2503.11509v3}.
 
 \bibitem{magicgeo} Wang, J. và cộng sự. \emph{MagicGeo: Training-Free Text-Guided Geometric Diagram Generation}. 2025. \href{https://arxiv.org/abs/2502.13855}{arXiv:2502.13855}.
 
@@ -1074,6 +1044,15 @@ Bước tiếp theo là hoàn thiện targets đã duyệt, tổ chức held-out
 
 
 \bibitem{geo3ktikz} SunnyLin. \emph{Geo3K-TikZ}. Hugging Face dataset. \href{https://huggingface.co/datasets/SunnyLin/geo3k-tikz/tree/main}{Dataset repository}.
+
+
+\bibitem{pymupdf} PyMuPDF. \emph{Page.get\_drawings: Vector Graphics Extraction}. Official documentation. \href{https://pymupdf.readthedocs.io/en/latest/page.html\#Page.get_drawings}{PyMuPDF documentation}.
+
+\bibitem{pgfnodes} Till Tantau và PGF/TikZ contributors. \emph{PGF/TikZ Manual: Nodes and Edges; Coordinate Systems}. \href{https://tikz.dev/tikz-shapes}{Nodes and edges}; \href{https://tikz.dev/tikz-coordinates}{Coordinate systems}.
+
+\bibitem{tikzpaths} Till Tantau và PGF/TikZ contributors. \emph{PGF/TikZ Manual: The Arc Operation}. \href{https://tikz.dev/tikz-paths\#sec-14.7}{Official documentation}.
+
+\bibitem{tomasi1992} Tomasi, C., và Kanade, T. \emph{Shape and Motion from Image Streams under Orthography: A Factorization Method}. International Journal of Computer Vision, 9(2), 137--154, 1992. Section 3.1, equation (9). \href{https://cs.brown.edu/courses/cs143/2011/proj5/Tomasi_Kanade_IJCV_1992.pdf}{Paper}.
 
 \end{thebibliography}
 \end{document}

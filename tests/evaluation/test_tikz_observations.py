@@ -1,294 +1,137 @@
+"""Native trace integrity, attachment identity and the shared compiler boundary."""
 import base64
 from pathlib import Path
 
 import httpx
-import pymupdf
 import pytest
-from latex_compiler.schemas import (
-    Artifact,
-    CompileRequest,
-    CompileResponse,
-    StageResult,
-)
+from latex_compiler.schemas import CompileRequest
 
-from evaluation.tikz_observations import (
-    _bind_text_labels,
-    _pdf_text_line_observation,
-    _point_label,
-    compile_observe,
-    read_scene,
-)
+from evaluation.tikz_observations import compile_observe, read_scene
+from evaluation.tikz_pgf import normalize_text, parse_trace
+from conftest import label_records
 
-TIKZ = r"""\begin{tikzpicture}
-\coordinate (A) at (0,1);
-\coordinate (H) at (0,0);
-\coordinate (B) at (-1,0);
-\coordinate (C) at (1,0);
-\draw (A)--(H);
-\draw (B)--(C);
-\end{tikzpicture}"""
+TIKZ=r'\begin{tikzpicture}\draw (0,0)--(1,0);\end{tikzpicture}'
 
 
-def _pdf_and_png() -> tuple[bytes, bytes]:
-    document = pymupdf.open()
-    page = document.new_page(width=120, height=90)
-    page.draw_line((10, 30), (80, 30))
-    page.insert_text((12, 20), "A")
-    pdf = document.tobytes()
-    png = page.get_pixmap().tobytes("png")
-    document.close()
-    return pdf, png
+def test_visible_labels_own_identity_not_internal_coordinate_names(pgf_records):
+    rows=label_records(1,'A',(5,8))
+    rows+=label_records(2,'A',(900,900),text='',visible=False)
+    rows+=label_records(3,'B',(20,8))
+    observed=read_scene(pgf_records(rows))
+    assert observed['points']=={'A':(5,8),'B':(20,8)}
+    assert not observed['unresolved']
+    ambiguous=read_scene(pgf_records(rows+label_records(4,'A',(80,80))))
+    assert ambiguous['points']['A'] is None and ambiguous['unresolved']==['A']
 
 
-def _artifact(name: str, data: bytes) -> Artifact:
-    return Artifact(name=name, data_base64=base64.b64encode(data).decode("ascii"))
+def test_system_transform_is_applied_once_to_attachment_and_text(pgf_records):
+    rows=['beginscope','transformcm|0|2|-2|0|10pt|20pt',*label_records(1,'A',(3,5)), 'endscope',
+          *label_records(2,'B',(3,5))]
+    scene=read_scene(pgf_records(rows))
+    assert scene['points']=={'A':(0,26),'B':(3,5)}
+    assert scene['text'][0]['boxes'][0]['corners'][0]==(12,22)
+    assert [label['size'] for label in scene['text']]==[16,8]
+
+
+@pytest.mark.parametrize('text,expected', [(r'$A^{\prime}$',"A'"),(r'$A_1$','A1'),(r'$60^{\circ}$','60\u00b0'),(r'$\mathrm{B}$','B')])
+def test_simple_executed_text_normalization(text,expected):
+    assert normalize_text(text)==expected
+
+
+@pytest.mark.parametrize('damage', ['missing_done','unknown','nonfinite','scope','missing_node','truncated'])
+def test_incomplete_or_malformed_trace_is_not_silently_accepted(pgf_records,damage):
+    obs=pgf_records(label_records(1,'A',(0,0)))
+    raw=Path(obs['log_path']).read_text()
+    if damage=='missing_done': raw=raw.replace('PGFEVAL|DONE|ENDPGFEVAL','')
+    if damage=='unknown': raw=raw.replace('PGFEVAL|DONE', 'PGFEVAL|unrecognized|ENDPGFEVAL\nPGFEVAL|DONE')
+    if damage=='nonfinite': raw=raw.replace('|0pt|0pt','|nanpt|0pt',1)
+    if damage=='scope': raw=raw.replace('PGFEVAL|DONE','PGFEVAL|beginscope|ENDPGFEVAL\nPGFEVAL|DONE')
+    if damage=='missing_node': raw='\n'.join(line for line in raw.splitlines() if not line.startswith('PGFEVAL|ATTACH|'))
+    if damage=='truncated': raw=raw.replace('PGFEVAL|DONE','PGFEVAL|TRUNCATED|ENDPGFEVAL\nPGFEVAL|DONE')
+    with pytest.raises(ValueError): parse_trace(raw)
+
+
+def test_log_wrapping_and_changed_artifacts(pgf_records):
+    obs=pgf_records(label_records(1,'A',(0,0)))
+    path=Path(obs['log_path']); raw=path.read_text()
+    wrapped='\n'.join(raw[i:i+67] for i in range(0,len(raw),67))
+    assert parse_trace(wrapped)['nodes'][0]['text']=='$A$'
+    path.write_text(raw+'changed')
+    with pytest.raises(ValueError,match='changed'): read_scene(obs)
+    obs['metadata']['schema_version']='tikz-observations:v4'
+    with pytest.raises(ValueError,match='Obsolete'): read_scene(obs)
+
+
+@pytest.mark.parametrize('preview',[False,True])
+def test_one_compile_without_pdf_observation(tmp_path,pgf_records,preview):
+    fixture=pgf_records(label_records(1,'A',(0,0)))
+    raw=Path(fixture['log_path']).read_bytes()
+    calls=[]
+    def handle(request):
+        payload=CompileRequest.model_validate_json(request.content);calls.append(payload)
+        assert payload.outputs.pdf is False
+        assert bool(payload.outputs.images)==preview
+        assert 'pgf_trace.tex' in payload.support_files
+        artifacts=[{'name':'result.log','data_base64':base64.b64encode(raw).decode()}]
+        if preview: artifacts.append({'name':'page-1.png','data_base64':base64.b64encode(b'preview-only').decode()})
+        return httpx.Response(200,json={'toolchain_id':'fixture','source_digest':payload.digest('fixture'),
+            'compile':{'outcome':'ok','exit_code':0},'raster':{'outcome':'ok' if preview else 'not_requested'},
+            'page_count':1,'artifacts':artifacts})
+    with httpx.Client(base_url='http://compiler',transport=httpx.MockTransport(handle)) as client:
+        observation=compile_observe(TIKZ,tmp_path/'compiled',client,preview=preview)
+    assert len(calls)==1
+    assert bool(observation['image_path'])==preview
+    assert read_scene(observation)['points']=={'A':(0,0)}
+    assert not list((tmp_path/'compiled').glob('*.pdf'))
+
+
+def test_instrumentation_failure_is_checked_against_original_compile(tmp_path):
+    calls=[]
+    def handle(request):
+        payload=CompileRequest.model_validate_json(request.content);calls.append(payload)
+        return httpx.Response(200,json={'toolchain_id':'fixture','source_digest':payload.digest('fixture'),
+            'compile':{'outcome':'error' if payload.support_files else 'ok','exit_code':1 if payload.support_files else 0}})
+    with httpx.Client(base_url='http://compiler',transport=httpx.MockTransport(handle)) as client:
+        observed=compile_observe(TIKZ,tmp_path/'failed-hook',client)
+    assert len(calls)==2 and observed['compile_success']
+    with pytest.raises(ValueError,match='log unavailable'): read_scene(observed)
+
+
+@pytest.mark.parametrize('source',[r'\input{secret}',r'\begin{tikzpicture}\write18{bad}\end{tikzpicture}',
+                                   r'\begin{tikzpicture}^^61\end{tikzpicture}'])
+def test_source_validation_precedes_instrumentation(tmp_path,source):
+    def forbidden(request): raise AssertionError('Unsafe source reached compiler')
+    with httpx.Client(base_url='http://compiler',transport=httpx.MockTransport(forbidden)) as client:
+        result=compile_observe(source,tmp_path/'invalid',client)
+    assert result['compile']['outcome']=='validation_failed'
+
+
+def test_comments_and_shared_libraries_remain_accepted(tmp_path,pgf_records):
+    raw=Path(pgf_records([])['log_path']).read_bytes()
+    def handle(request):
+        payload=CompileRequest.model_validate_json(request.content)
+        assert '% source comment' in payload.source
+        return httpx.Response(200,json={'toolchain_id':'fixture','source_digest':payload.digest('fixture'),
+            'compile':{'outcome':'ok','exit_code':0},'artifacts':[{'name':'result.log','data_base64':base64.b64encode(raw).decode()}]})
+    with httpx.Client(base_url='http://compiler',transport=httpx.MockTransport(handle)) as client:
+        assert compile_observe('\\usetikzlibrary{calc}\n% source comment\n'+TIKZ,tmp_path/'comments',client)['compile_success']
+
+
+def test_tracer_revision_is_part_of_observation_identity(pgf_records):
+    observed=pgf_records([])
+    observed['metadata']['tracer_sha256']='0'*64
+    with pytest.raises(ValueError,match='tracer changed'):
+        read_scene(observed)
 
 
 
-
-
-
-
-def test_point_label_normalizes_primes_and_keeps_duplicates_unknown():
-    assert _point_label("A\u2032") == "A'"
-    assert _point_label(" A \u2019 ") == "A'"
-    pdf = {
-        "pages": [
-            {
-                "page_number": 1,
-                "text_spans": [
-                    {"text": "A\u2032", "bbox_pt": [1, 1, 5, 5]},
-                    {"text": "A\u2019", "bbox_pt": [8, 1, 12, 5]},
-                ],
-            }
-        ]
-    }
-    labels = _bind_text_labels(pdf, [], {"status": "verified_dimensions", "picture_id": "pgfid1"})
-    assert labels["A'"]["status"] == "unknown"
-    assert labels["A'"]["reason"] == "merged_or_duplicate_ambiguous_pdf_label"
-
-
-def test_pdf_line_joins_font_split_superscript_prime_and_keeps_glyph_boxes():
-    line = {
-        "bbox": (10, 10, 20, 20),
-        "spans": [
-            {
-                "chars": [{"c": "A", "bbox": (10, 12, 17, 20)}],
-                "font": "MathFont-Regular",
-                "size": 10,
-            },
-            {
-                "chars": [{"c": "′", "bbox": (16, 10, 20, 15)}],
-                "font": "MathFont-Symbol",
-                "size": 6,
-            },
-        ],
-    }
-
-    observation = _pdf_text_line_observation(line)
-
-    assert observation is not None
-    assert observation["text"] == "A′"
-    assert _point_label(observation["text"]) == "A'"
-    assert observation["bbox_pt"] == [10.0, 10.0, 20.0, 20.0]
-    assert observation["size_pt"] == 10
-    assert observation["source_span_count"] == 2
-    assert len(observation["glyphs"]) == 2
-
-
-def test_overlapping_merged_pdf_labels_remain_unknown():
-    pdf = {
-        "pages": [
-            {
-                "page_number": 1,
-                "text_spans": [
-                    {
-                        "text": "AB",
-                        "bbox_pt": [1, 1, 10, 10],
-                        "glyphs": [
-                            {"text": "A", "bbox_pt": [1, 1, 7, 10]},
-                            {"text": "B", "bbox_pt": [1, 1, 7, 10]},
-                        ],
-                    }
-                ],
-            }
-        ]
-    }
-    labels = _bind_text_labels(pdf, [], {"status": "verified_dimensions", "picture_id": "pgfid1"})
-    assert labels["A"]["status"] == "unknown"
-    assert labels["B"]["status"] == "unknown"
-    assert labels["A"]["reason"] == "merged_or_duplicate_ambiguous_pdf_label"
-
-
-def _discovery_compiler(*, same_render: bool = True):
-    pdf, png = _pdf_and_png()
-    with pymupdf.open(stream=pdf, filetype="pdf") as document:
-        page = document[0]
-        label_bbox = next(
-            span["bbox"]
-            for block in page.get_text("dict")["blocks"]
-            if block.get("type") == 0
-            for line in block["lines"]
-            for span in line["spans"]
-            if span.get("text") == "A"
-        )
-        page_rect = page.rect
-    conversion = 72.0 / 72.27
-    border = 4.0
-    min_x, min_y = -5.0, -5.0
-    max_x = min_x + page_rect.width / conversion - 2 * border
-    max_y = min_y + page_rect.height / conversion - 2 * border
-
-    def pgf_point(pdf_x: float, pdf_y: float) -> tuple[float, float]:
-        return (
-            min_x + pdf_x / conversion - border,
-            max_y + border - pdf_y / conversion,
-        )
-
-    left, top, right, bottom = label_bbox
-    # The label node is intentionally displaced from the point it annotates.
-    point_pdf = (42.0, 38.0)
-    point_x, point_y = pgf_point(*point_pdf)
-    node_pdf_box = (left - 2, top - 2, right + 2, bottom + 2)
-    north_west = pgf_point(node_pdf_box[0], node_pdf_box[1])
-    north_east = pgf_point(node_pdf_box[2], node_pdf_box[1])
-    south_west = pgf_point(node_pdf_box[0], node_pdf_box[3])
-    south_east = pgf_point(node_pdf_box[2], node_pdf_box[3])
-    discovery_log = (
-        "PTKZNODE|pgfid1|1|circle|ok|node-position\n"
-        f"PTKZNPOS|pgfid1|1|{point_x}pt|{point_y}pt|{point_x}pt|{point_y}pt\n"
-        f"PTKZNBBOX|pgfid1|1|{north_west[0]}pt|{north_west[1]}pt|{north_east[0]}pt|{north_east[1]}pt\n"
-        f"PTKZNSBOX|pgfid1|1|{south_west[0]}pt|{south_west[1]}pt|{south_east[0]}pt|{south_east[1]}pt\n"
-        f"PTKZBBOX|pgfid1|{min_x}pt|{min_y}pt|{max_x}pt|{max_y}pt\n"
-    ).encode()
-    requests: list[CompileRequest] = []
-
-    def handle(request: httpx.Request) -> httpx.Response:
-        compile_request = CompileRequest.model_validate_json(request.content)
-        requests.append(compile_request)
-        is_discovery = "PTKZNODE" in compile_request.source
-        artifacts = [_artifact("result.log", discovery_log if is_discovery else b"")]
-        if compile_request.outputs.pdf:
-            artifacts.append(_artifact("result.pdf", pdf))
-        if compile_request.outputs.images is not None:
-            artifacts.append(_artifact("page-1.png", png if same_render or not is_discovery else b"different render"))
-        result = CompileResponse(
-            source_digest=compile_request.digest("test-toolchain"),
-            toolchain_id="test-toolchain",
-            page_count=1,
-            compile=StageResult(outcome="ok", exit_code=0),
-            raster=StageResult(
-                outcome="not_requested"
-                if compile_request.outputs.images is None
-                else "ok",
-                exit_code=0,
-            ),
-            artifacts=artifacts,
-        )
-        return httpx.Response(200, json=result.model_dump(mode="json"))
-
-    client = httpx.Client(base_url="http://compiler.test", transport=httpx.MockTransport(handle))
-    return client, requests
-
-
-def test_discovery_binds_moved_label_to_executed_origin_without_filled_marker(tmp_path: Path):
-    client, requests = _discovery_compiler()
-    try:
-        observed = compile_observe(TIKZ, tmp_path / "discovery", client)
-    finally:
-        client.close()
-
-    assert len(requests) == 2
-    assert "PTKZDISC" not in requests[1].source and "PTKZPOINT" not in requests[1].source
-    assert "tikz@label@post/.append code" in requests[1].source
-    assert "PTKZANN|" not in requests[1].source
-    assert Path(observed["source_path"]).is_file()
-    assert Path(observed["metadata"]["discovery"]["source_path"]).is_file()
-    assert observed["metadata"]["discovery"]["render_identity"]["status"] == "identical_png_bytes"
-    assert observed["metadata"]["discovery"]["frame_mapping"]["status"] == "verified_dimensions"
-    assert observed["labeled_points"]["A"]["status"] == "measured"
-    assert observed["labeled_points"]["A"]["pdf_x"] == pytest.approx(42.0)
-    assert observed["labeled_points"]["A"]["pdf_y"] == pytest.approx(38.0)
-    assert observed["labeled_points"]["A"]["pdf_coordinate_error_bound_pt"] == 2e-5
-    assert "circle_path_pdf" not in observed["nodes"][0]
-    assert "annotations" not in observed
-
-
-def test_discovery_render_mismatch_invalidates_instrumented_geometry(tmp_path: Path):
-    client, _ = _discovery_compiler(same_render=False)
-    try:
-        observed = compile_observe(TIKZ, tmp_path / "mismatch", client)
-    finally:
-        client.close()
-
-    assert observed["compile_success"] is True
-    assert observed["metadata"]["discovery"]["status"] == "unknown"
-    assert observed["metadata"]["discovery"]["reason"] == "instrumentation_render_mismatch"
-    assert observed["nodes"] == []
-    assert observed["labeled_points"] == {}
-
-
-def test_compiled_pdf_capture_is_reused_without_extracting_paths_or_text_again(tmp_path, monkeypatch):
-    client, requests = _discovery_compiler()
-    with client:
-        observed = compile_observe(TIKZ, tmp_path / "capture", client)
-    assert len(requests) == 2
-    assert observed["metadata"]["schema_version"] == "tikz-observations:v4"
-    assert "measurement" not in observed["metadata"]
-    assert observed["pdf_observations"]["pages"][0]["glyph_outlines"]["status"] == "ok"
-
-    def unexpected_extraction(*args, **kwargs):
-        raise AssertionError("Original paths/text must use the canonical saved PDF capture")
-
-    monkeypatch.setattr(pymupdf.Page, "get_drawings", unexpected_extraction)
-    monkeypatch.setattr(pymupdf.Page, "get_text", unexpected_extraction)
-    scene = read_scene(observed)
-    assert scene["frame"] == "original_pdf" and scene["unit"] == "pdf_pt"
-    assert scene["points"]["A"] == pytest.approx((42, 38))
-    assert scene["strokes"] and scene["text"][0]["glyphs"][0].get("ink") is not None
-
-
-def test_compiler_transport_failure_remains_unavailable(tmp_path):
-    def unavailable(request):
-        raise httpx.ConnectError("compiler unavailable", request=request)
-
-    with httpx.Client(base_url="http://compiler.test", transport=httpx.MockTransport(unavailable)) as client:
-        observed = compile_observe(TIKZ, tmp_path / "unavailable", client)
-    assert observed["compile"]["outcome"] == "unknown"
-    assert observed["compile_success"] is False and observed["labeled_points"] == {}
-    assert observed["pdf_path"] is None
-
-
-def test_dataset_comments_and_shared_libraries_compile_without_rewriting_source(tmp_path):
-    source = (
-        "% Geo3K source; ignored example \\input{ignored}\n"
-        "\\usetikzlibrary{calc, angles}\n"
-        "% keep layout comments\n"
-        + TIKZ.replace("\\coordinate (A)", "% original point\n\\coordinate (A)")
-        + "\n% trailing comment"
-    )
-    client, requests = _discovery_compiler()
-    with client:
-        observed = compile_observe(source, tmp_path / "dataset", client)
-    assert observed["compile_success"] is True
-    assert len(requests) == 2
-    assert source in requests[0].source
-    assert "% original point" in requests[1].source
-    assert Path(observed["source_path"]).read_text(encoding="utf-8") == requests[0].source
-
-
-@pytest.mark.parametrize("source", [
-    "surrounding prose\n" + TIKZ,
-    "\\documentclass{standalone}\n" + TIKZ,
-    "\\usetikzlibrary{external}\n" + TIKZ,
-    TIKZ.replace("\\coordinate (A)", "\\input{secret}\n\\coordinate (A)"),
-    TIKZ + "\n" + TIKZ,
-    "% ^^ encoded characters\n" + TIKZ,
-])
-def test_evaluation_source_compatibility_retains_shared_safety_checks(tmp_path, source):
-    client, requests = _discovery_compiler()
-    with client:
-        observed = compile_observe(source, tmp_path / "invalid", client)
-    assert observed["compile_success"] is False
-    assert observed["compile"]["outcome"] == "validation_failed"
-    assert requests == []
+def test_shipout_order_is_required_and_distinct_from_construction_order(pgf_records):
+    observation=pgf_records(['ORDER|11','rect|0pt|0pt|10pt|10pt',
+                             'ORDER|12','fill','ORDER|13','fill@opacity|0'])
+    raw=Path(observation['log_path']).read_text()
+    with pytest.raises(ValueError,match='shipout'):
+        parse_trace(raw)
+    ordered=raw+'PGFORDER|13|ENDPGFORDER\nPGFORDER|11|ENDPGFORDER\nPGFORDER|12|ENDPGFORDER\nPGFORDER|DONE|ENDPGFORDER'
+    assert parse_trace(ordered)['paths'][0]['fill_opacity']==0
+    with pytest.raises(ValueError,match='ambiguous paint occurrences'):
+        parse_trace(ordered.replace('PGFORDER|DONE','PGFORDER|11|ENDPGFORDER\nPGFORDER|DONE'))

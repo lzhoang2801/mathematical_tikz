@@ -1,0 +1,3 @@
+# Optional numerical backend for the experimental Spec First planar worker.
+# Install into the worker environment; do not alter the reference mathmath env.
+scipy==1.17.1

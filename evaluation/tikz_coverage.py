@@ -7,6 +7,8 @@ from typing import Any
 from shapely.geometry import LineString
 from shapely.ops import unary_union
 
+from evaluation.tikz_marks import compare_mark_content, observe_marks
+
 PATH_TOLERANCE = 0.006
 COVERAGE_MINIMUM = 0.985
 
@@ -50,12 +52,6 @@ def connections(scene: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-def carrier_scene(scene: dict[str, Any], reference_connections: list[dict[str, Any]]) -> dict[str, Any]:
-    """Keep actual diagram carriers for collisions, excluding unrelated text rules."""
-    lines = [_line(edge, scene['points']) for edge in reference_connections + connections(scene)]
-    support = unary_union([line for line in lines if line is not None])
-    strokes = [row for row in _segments(scene) if _fraction(row['geometry'], support) >= COVERAGE_MINIMUM]
-    return {**scene, 'strokes': strokes + scene.get('curves', [])}
 
 
 def compare_content(target: dict[str, Any], output: dict[str, Any], circle_matches: list[int | None]) -> list[bool]:
@@ -74,8 +70,12 @@ def compare_content(target: dict[str, Any], output: dict[str, Any], circle_match
             expected.append(line)
     expected_support = unary_union(expected)
     checks += [False for edge in connections(output) if _fraction(edge['geometry'], expected_support) < COVERAGE_MINIMUM]
-    circles, drawn = target.get('circles', []), output.get('circles', [])
-    checks += [j is not None and circles[i]['dashed'] == drawn[j]['dashed'] for i, j in enumerate(circle_matches)]
+    circles = target.get('circles', []) + target.get('arcs', [])
+    drawn = output.get('circles', []) + output.get('arcs', [])
+    checks += [j is not None and circles[i].get('closed', True) == drawn[j].get('closed', True)
+               and circles[i]['dashed'] == drawn[j]['dashed'] for i, j in enumerate(circle_matches)]
     checks += [False] * max(0, len(drawn) - len(circles))
     checks += [False] * len(output.get('unsupported', []))
+    checks += compare_mark_content(observe_marks(target, connections(target)),
+                                   observe_marks(output, connections(output)), points)
     return checks

@@ -1,0 +1,312 @@
+% Trusted measurement hooks. User TikZ is validated before this file is loaded.
+\makeatletter
+\newif\ifpgfprobe@active
+\newcount\pgfprobe@count
+\def\pgfprobe@emit#1{\ifpgfprobe@active
+  \global\advance\pgfprobe@count by1
+  \ifnum\pgfprobe@count<100000
+    \typeout{PGFEVAL|#1|ENDPGFEVAL}%
+  \else\ifnum\pgfprobe@count=100000\typeout{PGFEVAL|TRUNCATED|ENDPGFEVAL}\fi\fi
+\fi}
+\def\PgfEvalBegin{\pgfprobe@activetrue\pgfprobe@emit{BEGIN|\pgfversion}}
+\def\PgfEvalEnd{\pgfprobe@emit{DONE}\pgfprobe@activefalse}
+\AddToHook{enddocument/afterlastpage}{\typeout{PGFORDER|DONE|ENDPGFORDER}}
+
+% Mirror native buffering: definitions are not paint, and every replay is observed.
+\RequirePackage{pdftexcmds}
+\let\NATIVE@protocol\pgfutil@empty
+\newif\ifNATIVE@ownliteral
+\newcount\NATIVE@paintcount
+\def\pgfprobe@ordered#1{%
+  \ifpgfprobe@active
+    \global\advance\NATIVE@paintcount by1
+    \pgfprobe@emit{ORDER|\the\NATIVE@paintcount}%
+    \pgfprobe@emit{#1}%
+    % A deferred write follows the box to shipout, including inline nodes/layers.
+    \begingroup
+      \edef\NATIVE@temp{\write-1{PGFORDER|\the\NATIVE@paintcount|ENDPGFORDER}}%
+      \NATIVE@temp
+    \endgroup
+  \fi
+}
+\def\pgfprobe@record#1#2{%
+  \ifpgfprobe@active
+    \begingroup
+      \edef\NATIVE@temp{\noexpand\pgfutil@g@addto@macro\noexpand\NATIVE@protocol{\noexpand#1{#2}}}%
+      \NATIVE@temp
+    \endgroup
+  \fi
+}
+\def\pgfprobe@context#1{%
+  \ifpgfsysprotocol@buffered\pgfprobe@record\pgfprobe@ordered{#1}%
+  \else\pgfprobe@ordered{#1}\fi
+}
+\def\pgfprobe@paint#1{\pgfprobe@record\pgfprobe@ordered{#1}\global\NATIVE@ownliteraltrue}
+\let\NATIVE@getprotocol\pgfsysprotocol@getcurrentprotocol
+\def\pgfsysprotocol@getcurrentprotocol#1{%
+  \NATIVE@getprotocol#1%
+  \expandafter\global\expandafter\let\csname NATIVE@protocol@\pdf@mdfivesum{#1}\endcsname\NATIVE@protocol
+}
+\let\NATIVE@setprotocol\pgfsysprotocol@setcurrentprotocol
+\def\pgfsysprotocol@setcurrentprotocol#1{%
+  \NATIVE@setprotocol#1%
+  \ifx#1\pgfutil@empty
+    \global\let\NATIVE@protocol\pgfutil@empty
+  \else
+    \ifcsname NATIVE@protocol@\pdf@mdfivesum{#1}\endcsname
+      \expandafter\global\expandafter\let\expandafter\NATIVE@protocol\csname NATIVE@protocol@\pdf@mdfivesum{#1}\endcsname
+    \else
+      \gdef\NATIVE@protocol{\pgfprobe@ordered{UNSUPPORTED|unobserved_protocol}}%
+    \fi
+  \fi
+}
+\let\NATIVE@literalbuffered\pgfsysprotocol@literalbuffered
+\def\pgfsysprotocol@literalbuffered#1{%
+  \ifNATIVE@ownliteral\else
+    \ifcsname NATIVE@protocol@\pdf@mdfivesum{#1}\endcsname
+      \expandafter\let\expandafter\NATIVE@replay\csname NATIVE@protocol@\pdf@mdfivesum{#1}\endcsname
+      \expandafter\pgfutil@g@addto@macro\expandafter\NATIVE@protocol\expandafter{\NATIVE@replay}%
+    \fi
+  \fi
+  \global\NATIVE@ownliteralfalse
+  \NATIVE@literalbuffered{#1}%
+}
+\let\NATIVE@invokeprotocol\pgfsysprotocol@invokecurrentprotocol
+\def\pgfsysprotocol@invokecurrentprotocol{\NATIVE@protocol\NATIVE@invokeprotocol}
+\let\pgfprobe@old@moveto\pgfsys@moveto
+\def\pgfsys@moveto#1#2{\pgfprobe@paint{moveto|\the\dimexpr#1\relax|\the\dimexpr#2\relax}\pgfprobe@old@moveto{#1}{#2}}
+\let\pgfprobe@old@lineto\pgfsys@lineto
+\def\pgfsys@lineto#1#2{\pgfprobe@paint{lineto|\the\dimexpr#1\relax|\the\dimexpr#2\relax}\pgfprobe@old@lineto{#1}{#2}}
+\let\pgfprobe@old@curveto\pgfsys@curveto
+\def\pgfsys@curveto#1#2#3#4#5#6{\pgfprobe@paint{curveto|\the\dimexpr#1\relax|\the\dimexpr#2\relax|\the\dimexpr#3\relax|\the\dimexpr#4\relax|\the\dimexpr#5\relax|\the\dimexpr#6\relax}\pgfprobe@old@curveto{#1}{#2}{#3}{#4}{#5}{#6}}
+\let\pgfprobe@old@rect\pgfsys@rect
+\def\pgfsys@rect#1#2#3#4{\pgfprobe@paint{rect|\the\dimexpr#1\relax|\the\dimexpr#2\relax|\the\dimexpr#3\relax|\the\dimexpr#4\relax}\pgfprobe@old@rect{#1}{#2}{#3}{#4}}
+\let\pgfprobe@old@closepath\pgfsys@closepath
+\def\pgfsys@closepath{\pgfprobe@paint{closepath}\pgfprobe@old@closepath}
+\let\pgfprobe@old@stroke\pgfsys@stroke
+\def\pgfsys@stroke{\pgfprobe@paint{stroke}\pgfprobe@old@stroke}
+\let\pgfprobe@old@closestroke\pgfsys@closestroke
+\def\pgfsys@closestroke{\pgfprobe@paint{closestroke}\pgfprobe@old@closestroke}
+\let\pgfprobe@old@fill\pgfsys@fill
+\def\pgfsys@fill{\pgfprobe@paint{fill}\pgfprobe@old@fill}
+\let\pgfprobe@old@fillstroke\pgfsys@fillstroke
+\def\pgfsys@fillstroke{\pgfprobe@paint{fillstroke}\pgfprobe@old@fillstroke}
+\let\pgfprobe@old@clipnext\pgfsys@clipnext
+\def\pgfsys@clipnext{\pgfprobe@paint{clipnext}\pgfprobe@old@clipnext}
+\let\pgfprobe@old@discardpath\pgfsys@discardpath
+\def\pgfsys@discardpath{\pgfprobe@paint{discardpath}\pgfprobe@old@discardpath}
+\let\pgfprobe@old@beginscope\pgfsys@beginscope
+\def\pgfsys@beginscope{\pgfprobe@paint{beginscope}\pgfprobe@old@beginscope}
+\let\pgfprobe@old@endscope\pgfsys@endscope
+\def\pgfsys@endscope{\pgfprobe@paint{endscope}\pgfprobe@old@endscope}
+\let\pgfprobe@old@transformcm\pgfsys@transformcm
+\def\pgfsys@transformcm#1#2#3#4#5#6{\pgfprobe@paint{transformcm|#1|#2|#3|#4|\the\dimexpr#5\relax|\the\dimexpr#6\relax}\pgfprobe@old@transformcm{#1}{#2}{#3}{#4}{#5}{#6}}
+\let\pgfprobe@old@setlinewidth\pgfsys@setlinewidth
+\def\pgfsys@setlinewidth#1{\pgfprobe@paint{setlinewidth|\the\dimexpr#1\relax}\pgfprobe@old@setlinewidth{#1}}
+\let\pgfprobe@old@setdash\pgfsys@setdash
+\def\pgfsys@setdash#1#2{\pgfprobe@paint{setdash|#1|\the\dimexpr#2\relax}\pgfprobe@old@setdash{#1}{#2}}
+\let\pgfprobe@old@setmiterlimit\pgfsys@setmiterlimit
+\def\pgfsys@setmiterlimit#1{\pgfprobe@paint{setmiterlimit|#1}\pgfprobe@old@setmiterlimit{#1}}
+\let\pgfprobe@old@roundcap\pgfsys@roundcap
+\def\pgfsys@roundcap{\pgfprobe@paint{roundcap}\pgfprobe@old@roundcap}
+\let\pgfprobe@old@buttcap\pgfsys@buttcap
+\def\pgfsys@buttcap{\pgfprobe@paint{buttcap}\pgfprobe@old@buttcap}
+\let\pgfprobe@old@rectcap\pgfsys@rectcap
+\def\pgfsys@rectcap{\pgfprobe@paint{rectcap}\pgfprobe@old@rectcap}
+\let\pgfprobe@old@roundjoin\pgfsys@roundjoin
+\def\pgfsys@roundjoin{\pgfprobe@paint{roundjoin}\pgfprobe@old@roundjoin}
+\let\pgfprobe@old@miterjoin\pgfsys@miterjoin
+\def\pgfsys@miterjoin{\pgfprobe@paint{miterjoin}\pgfprobe@old@miterjoin}
+\let\pgfprobe@old@beveljoin\pgfsys@beveljoin
+\def\pgfsys@beveljoin{\pgfprobe@paint{beveljoin}\pgfprobe@old@beveljoin}
+\let\pgfprobe@old@color@rgb@stroke\pgfsys@color@rgb@stroke
+\def\pgfsys@color@rgb@stroke#1#2#3{\pgfprobe@paint{color@rgb@stroke|#1|#2|#3}\pgfprobe@old@color@rgb@stroke{#1}{#2}{#3}}
+\let\pgfprobe@old@color@rgb@fill\pgfsys@color@rgb@fill
+\def\pgfsys@color@rgb@fill#1#2#3{\pgfprobe@paint{color@rgb@fill|#1|#2|#3}\pgfprobe@old@color@rgb@fill{#1}{#2}{#3}}
+\let\pgfprobe@old@color@gray@stroke\pgfsys@color@gray@stroke
+\def\pgfsys@color@gray@stroke#1{\pgfprobe@paint{color@gray@stroke|#1}\pgfprobe@old@color@gray@stroke{#1}}
+\let\pgfprobe@old@color@gray@fill\pgfsys@color@gray@fill
+\def\pgfsys@color@gray@fill#1{\pgfprobe@paint{color@gray@fill|#1}\pgfprobe@old@color@gray@fill{#1}}
+\let\pgfprobe@old@stroke@opacity\pgfsys@stroke@opacity
+\def\pgfsys@stroke@opacity#1{\pgfprobe@paint{stroke@opacity|#1}\pgfprobe@old@stroke@opacity{#1}}
+\let\pgfprobe@old@fill@opacity\pgfsys@fill@opacity
+\def\pgfsys@fill@opacity#1{\pgfprobe@paint{fill@opacity|#1}\pgfprobe@old@fill@opacity{#1}}
+
+\newcount\NATIVE@nodecount
+\newif\ifNATIVE@labelpending
+\def\NATIVE@captureparent{%
+  \begingroup
+    \pgftransformreset
+    \pgfpointanchor{\tikzlastnode}{center}%
+    \xdef\NATIVE@pendingx{\the\pgf@x}%
+    \xdef\NATIVE@pendingy{\the\pgf@y}%
+    \xdef\NATIVE@pendingparent{\tikzlastnode}%
+    \global\NATIVE@labelpendingtrue
+  \endgroup
+}
+\tikzset{tikz@label@post/.append code={\NATIVE@captureparent}}
+\let\NATIVE@oldbegin\tikz@node@begin@hook
+\def\tikz@node@begin@hook{%
+  \tikz@fig@mustbenamed
+  \NATIVE@oldbegin
+  % The font key executes inside the text box, after the node-begin hook.
+  \expandafter\def\expandafter\tikz@atbegin@node\expandafter{\tikz@atbegin@node
+    \pgfprobe@emit{TEXTFONT|\NATIVE@id|\f@size}%
+  }%
+  \ifNATIVE@labelpending
+    \let\NATIVE@attachx\NATIVE@pendingx
+    \let\NATIVE@attachy\NATIVE@pendingy
+    \let\NATIVE@parent\NATIVE@pendingparent
+    \def\NATIVE@attachkind{label-parent-center}%
+    \global\NATIVE@labelpendingfalse
+  \else
+    \pgf@process{\pgfpointtransformed{\tikz@node@at}}%
+    \edef\NATIVE@attachx{\the\pgf@x}%
+    \edef\NATIVE@attachy{\the\pgf@y}%
+    \def\NATIVE@parent{}%
+    \def\NATIVE@attachkind{node-position}%
+    \ifx\tikz@time\pgfutil@empty\else
+      % On-path placement is only known after TikZ executes its timer.
+      \let\NATIVE@oldtimer\tikz@timer
+      \def\tikz@timer{%
+        \NATIVE@oldtimer
+        \pgf@process{\pgfpointtransformed{\pgfpointorigin}}%
+        \edef\NATIVE@attachx{\the\pgf@x}%
+        \edef\NATIVE@attachy{\the\pgf@y}%
+      }%
+    \fi
+  \fi
+}
+\let\NATIVE@oldfigmain\tikz@fig@main
+\def\tikz@fig@main{\iftikz@node@is@pic\let\NATIVE@next\NATIVE@oldfigmain\else\let\NATIVE@next\NATIVE@textmain\fi\NATIVE@next}
+\long\def\NATIVE@textmain#1{%
+  \global\advance\NATIVE@nodecount by1
+  \edef\NATIVE@id{\the\NATIVE@nodecount}%
+  \protected@edef\NATIVE@text{#1}%
+  \pgfprobe@emit{NODE_CONTEXT|\NATIVE@id}%
+  \NATIVE@oldfigmain{#1}%
+}
+\let\NATIVE@oldfinish\tikz@node@finish
+\def\tikz@node@finish{%
+  \ifdefined\NATIVE@id
+    \pgfprobe@emit{NODE|\NATIVE@id|\tikz@fig@name|\NATIVE@parent|\tikz@shape}%
+    \pgfprobe@emit{ATTACH|\NATIVE@id|\NATIVE@attachkind|\NATIVE@attachx|\NATIVE@attachy}%
+    \pgfprobe@emit{TEXT|\NATIVE@id|\expandafter\detokenize\expandafter{\NATIVE@text}}%
+  \fi
+  \NATIVE@oldfinish
+}
+\let\NATIVE@oldnode\pgfmultipartnode
+\def\pgfmultipartnode#1#2#3#4{%
+  \ifdefined\NATIVE@id\pgfprobe@context{NODE_BEGIN|#3|\NATIVE@id}\else\pgfprobe@context{NODE_BEGIN|#3|}\fi%
+  \NATIVE@oldnode{#1}{#2}{#3}{#4}%
+  \pgfprobe@context{NODE_END}%
+}
+\let\NATIVE@oldhboxsynced\pgfsys@hboxsynced
+\def\pgfsys@hboxsynced#1{%
+  \begingroup
+    \ifdim\wd#1>0pt
+      \ifdefined\NATIVE@id
+        \pgf@process{\pgfpointtransformed{\pgfqpoint{0pt}{\ht#1}}}%
+        \edef\NATIVE@nw{\the\pgf@x|\the\pgf@y}%
+        \pgf@process{\pgfpointtransformed{\pgfqpoint{\wd#1}{\ht#1}}}%
+        \edef\NATIVE@ne{\the\pgf@x|\the\pgf@y}%
+        \pgf@process{\pgfpointtransformed{\pgfqpoint{0pt}{-\dp#1}}}%
+        \edef\NATIVE@sw{\the\pgf@x|\the\pgf@y}%
+        \pgf@process{\pgfpointtransformed{\pgfqpoint{\wd#1}{-\dp#1}}}%
+        \pgfprobe@ordered{TEXTBOX|\NATIVE@id|\NATIVE@nw|\NATIVE@ne|\NATIVE@sw|\the\pgf@x|\the\pgf@y}%
+        \pgf@process{\pgfpointtransformed{\pgfpointorigin}}%
+        \edef\NATIVE@fontorigin{\the\pgf@x|\the\pgf@y}%
+        \pgf@process{\pgfpointtransformed{\pgfqpoint{0pt}{1pt}}}%
+        \pgfprobe@context{TEXTSIZE|\NATIVE@id|\NATIVE@fontorigin|\the\pgf@x|\the\pgf@y}%
+      \else\pgfprobe@context{UNSUPPORTED|text_without_node}\fi
+    \fi
+  \endgroup
+  \NATIVE@oldhboxsynced{#1}%
+}
+\def\NATIVE@fillrule{\ifpgfsys@eorule\pgfprobe@paint{FILL_RULE|even_odd}\else\pgfprobe@paint{FILL_RULE|nonzero}\fi}
+\let\NATIVE@oldfill\pgfsys@fill
+\def\pgfsys@fill{\NATIVE@fillrule\NATIVE@oldfill}
+\let\NATIVE@oldfillstroke\pgfsys@fillstroke
+\def\pgfsys@fillstroke{\NATIVE@fillrule\NATIVE@oldfillstroke}
+\let\NATIVE@oldclip\pgfsys@clipnext
+\def\pgfsys@clipnext{\NATIVE@fillrule\NATIVE@oldclip}
+\def\PgfEvalBounds{\pgfprobe@emit{BOUNDS|\the\pgf@picminx|\the\pgf@picminy|\the\pgf@picmaxx|\the\pgf@picmaxy}}
+
+% These effects cannot be certified from the supported paint representation.
+\let\NATIVE@oldpattern\pgfsys@setpatternuncolored
+\def\pgfsys@setpatternuncolored#1#2#3#4{\pgfprobe@context{UNSUPPORTED|pattern}\NATIVE@oldpattern{#1}{#2}{#3}{#4}}
+\let\NATIVE@oldcolorpattern\pgfsys@setpatterncolored
+\def\pgfsys@setpatterncolored#1{\pgfprobe@context{UNSUPPORTED|pattern}\NATIVE@oldcolorpattern{#1}}
+\let\NATIVE@oldshading\pgfuseshading
+\def\pgfuseshading#1{\pgfprobe@context{UNSUPPORTED|shading}\NATIVE@oldshading{#1}}
+\let\NATIVE@oldblend\pgfsys@blend@mode
+\def\pgfsys@blend@mode#1{\pgfprobe@context{UNSUPPORTED|blend_mode}\NATIVE@oldblend{#1}}
+\let\NATIVE@oldgroup\pgfsys@transparencygroupfrombox
+\def\pgfsys@transparencygroupfrombox#1{\pgfprobe@context{UNSUPPORTED|transparency_group}\NATIVE@oldgroup{#1}}
+\let\NATIVE@oldfading\pgfsys@usefading
+\def\pgfsys@usefading#1#2#3#4#5#6#7{\pgfprobe@context{UNSUPPORTED|fading}\NATIVE@oldfading{#1}{#2}{#3}{#4}{#5}{#6}{#7}}
+
+\let\NATIVE@oldshadinginside\pgfsys@shadinginsidepgfpicture
+\def\pgfsys@shadinginsidepgfpicture#1{\pgfprobe@context{UNSUPPORTED|shading}\NATIVE@oldshadinginside{#1}}
+\let\NATIVE@oldendpicture\endpgfpicture
+\def\endpgfpicture{\PgfEvalBounds\NATIVE@oldendpicture}
+
+% Bind exact constructor-produced cubics to paint; never replay constructor arguments.
+\def\NATIVE@registercurve#1#2#3#4#5#6{%
+  \ifx\pgf@nlt@list\pgfutil@empty
+    \pgfprobe@emit{CONIC|\NATIVE@fromx|\NATIVE@fromy|\NATIVE@conic|\NATIVE@sweep|\the\dimexpr#1\relax|\the\dimexpr#2\relax|\the\dimexpr#3\relax|\the\dimexpr#4\relax|\the\dimexpr#5\relax|\the\dimexpr#6\relax}%
+  \fi
+}
+\let\NATIVE@ellipse\pgfpathellipse
+\def\pgfpathellipse#1#2#3{%
+  \begingroup
+    \let\NATIVE@moveto\pgf@nlt@moveto
+    \def\pgf@nlt@moveto##1##2{%
+      \xdef\NATIVE@conic{\the\pgf@xc|\the\pgf@yc|\the\dimexpr##1-\pgf@xc\relax|\the\dimexpr##2-\pgf@yc\relax|\the\pgf@xb|\the\pgf@yb}%
+      \xdef\NATIVE@fromx{\the##1}\xdef\NATIVE@fromy{\the##2}%
+      \let\pgf@nlt@moveto\NATIVE@moveto
+      \NATIVE@moveto{##1}{##2}%
+    }%
+    \let\NATIVE@softcurve\pgfsyssoftpath@curveto
+    \def\pgfsyssoftpath@curveto##1##2##3##4##5##6{%
+      \def\NATIVE@sweep{90}%
+      \NATIVE@registercurve{##1}{##2}{##3}{##4}{##5}{##6}%
+      \xdef\NATIVE@fromx{##5}\xdef\NATIVE@fromy{##6}%
+      \NATIVE@softcurve{##1}{##2}{##3}{##4}{##5}{##6}%
+    }%
+    \NATIVE@ellipse{#1}{#2}{#3}%
+  \endgroup
+}
+\let\NATIVE@arc\pgf@arc
+\def\pgf@arc{%
+  \begingroup
+    \edef\NATIVE@fromx{\the\pgf@path@lastx}\edef\NATIVE@fromy{\the\pgf@path@lasty}%
+    \edef\NATIVE@angle{\pgf@sys@tonumber\pgf@arc@local@angle@a}%
+    \edef\NATIVE@sweep{\the\dimexpr\pgf@arc@local@angle@b-\pgf@arc@local@angle@a\relax}%
+    \pgf@process{\pgfpointtransformed{\pgfpointpolar{\NATIVE@angle}{\pgf@arc@radius@a pt and \pgf@arc@radius@b pt}}}%
+    \edef\NATIVE@conic{\the\dimexpr\pgf@path@lastx-\pgf@x+\pgf@pt@x\relax|\the\dimexpr\pgf@path@lasty-\pgf@y+\pgf@pt@y\relax}%
+    \pgf@process{\pgfpointtransformed{\pgfqpoint{\pgf@arc@radius@a pt}{0pt}}}%
+    \edef\NATIVE@conic{\NATIVE@conic|\the\dimexpr\pgf@x-\pgf@pt@x\relax|\the\dimexpr\pgf@y-\pgf@pt@y\relax}%
+    \pgf@process{\pgfpointtransformed{\pgfqpoint{0pt}{\pgf@arc@radius@b pt}}}%
+    \edef\NATIVE@conic{\NATIVE@conic|\the\dimexpr\pgf@x-\pgf@pt@x\relax|\the\dimexpr\pgf@y-\pgf@pt@y\relax}%
+    \let\NATIVE@softcurve\pgfsyssoftpath@curveto
+    \def\pgfsyssoftpath@curveto##1##2##3##4##5##6{%
+      \NATIVE@registercurve{##1}{##2}{##3}{##4}{##5}{##6}%
+      \NATIVE@softcurve{##1}{##2}{##3}{##4}{##5}{##6}%
+    }%
+    \NATIVE@arc
+  \endgroup
+}
+\let\NATIVE@drawarrow\pgf@arrow@draw@arrow
+\def\pgf@arrow@draw@arrow#1#2{%
+  \begingroup
+    \pgf@process{\pgfpointtransformed{\pgfpointorigin}}%
+    \edef\NATIVE@tip{\the\pgf@x|\the\pgf@y}%
+    \pgf@process{\pgfpointtransformed{\pgfqpoint{1pt}{0pt}}}%
+    \pgfprobe@context{ARROW_BEGIN|\NATIVE@tip|\the\pgf@x|\the\pgf@y}%
+  \endgroup
+  \NATIVE@drawarrow{#1}{#2}%
+  \pgfprobe@context{ARROW_END}%
+}
+
+\makeatother

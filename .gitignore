@@ -174,3 +174,6 @@ dataset/**
 !dataset/**/generate.jsonl
 !dataset/**/*.parquet
 !dataset/synthetic/excluded.jsonl
+
+# Disposable study work
+/tmp/

@@ -11,7 +11,6 @@ SELECTION = REPO / "docs/dataset-selection"
 IMAGE_LISTS = ("grades-6-7.images.jsonl", "grades-8-9.images.jsonl",
                "grades-10-11.images.jsonl", "grade-12.images.jsonl")
 PROBLEM_LISTS = ("grades-6-7.problems.jsonl", "grade-8.problems.jsonl", "grade-9.problems.jsonl")
-TYPES = {f"G{i:02}" for i in range(1, 18)} | {f"A{i:02}" for i in range(1, 7)}
 
 def require(condition, message):
     if not condition:
@@ -33,8 +32,6 @@ def common(row, root):
     require(row["book_role"] in {"sgk", "sgv", "sgk_cd", "sgv_cd"}, "Invalid book role")
     expected = "book.final.md" if row["grade"] <= 9 else "full.md"
     require(path.name == expected, f"Wrong source artifact: {path}")
-    require(isinstance(row["diagram_types"], list) and
-            set(row["diagram_types"]) <= TYPES, f"Unknown diagram types: {row}")
     return path
 
 def rows(filename):
@@ -79,6 +76,9 @@ def build(root):
             require(type(row["grade"]) is int and 6 <= row["grade"] <= 12, "Only grades 6–12")
             require(row["decision"] in {"selected", "excluded", "needs_review"},
                     "Invalid image decision")
+            legacy_labels = row.get("diagram_types")
+            if legacy_labels and not any(label.startswith("G") for label in legacy_labels):
+                continue
             decisions["images"][row["decision"]] += 1
             md = common(row, root)
             img = source(root, row["source_image"])
@@ -104,20 +104,21 @@ def build(root):
             require(row["visual_checked"] is True, f"Image without visual check: {img}")
             if row["decision"] != "selected":
                 continue
-            require(row["diagram_types"], f"Unclassified image: {img}")
             digest = hashlib.sha256(img.read_bytes()).hexdigest()
             item = images.setdefault(digest, {
                 "id": "image-" + digest[:16], "sha256": digest,
                 "asset_path": "assets/" + digest + img.suffix.lower(),
-                "grades": [], "diagram_types": [], "sources": [],
+                "grades": [], "sources": [],
             })
             item["grades"] = sorted(set(item["grades"]) | {row["grade"]})
-            item["diagram_types"] = sorted(set(item["diagram_types"]) | set(row["diagram_types"]))
             item["sources"].append(row)
     for filename in PROBLEM_LISTS:
         for row in rows(filename):
             require(type(row["grade"]) is int and 6 <= row["grade"] <= 12, "Only grades 6–12")
             require(row["decision"] in {"prepared", "needs_review"}, "Invalid problem decision")
+            legacy_labels = row.get("diagram_types")
+            if legacy_labels and not any(label.startswith("G") for label in legacy_labels):
+                continue
             decisions["problems"][row["decision"]] += 1
             if row["decision"] != "prepared":
                 continue
@@ -131,10 +132,10 @@ def build(root):
                     f"Invalid problem range: {row['id']}")
             expected = "\n".join(lines(md)[start - 1:end]).strip()
             require(row["source_text"].strip() == expected, f"Source text differs: {row['id']}")
-            require(len(expected) > 30 and row["diagram_types"], f"Incomplete/unclassified: {row['id']}")
+            require(len(expected) > 30, f"Incomplete source text: {row['id']}")
             for relative in row["image_paths"]:
                 source(root, relative)
-            problems.append(row)
+            problems.append({key: value for key, value in row.items() if key != "diagram_types"})
     for row in problems:
         require(set(row.get("context_ids", [])) <= ids,
                 f"Missing prepared context: {row['id']}")
@@ -144,7 +145,6 @@ def build(root):
         "selected_source_crops": decisions["images"]["selected"],
         "prepared_problems": len(problems),
         "problem_kinds": dict(Counter(p["source_kind"] for p in problems)),
-        "images_by_type": dict(sorted(Counter(t for im in image_list for t in im["diagram_types"]).items())),
         "decisions": {k: dict(v) for k, v in decisions.items()},
         "by_grade": {
             str(g): {"images": sum(g in im["grades"] for im in image_list),

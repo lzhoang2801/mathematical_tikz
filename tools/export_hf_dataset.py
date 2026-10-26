@@ -13,6 +13,7 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.audit_geo3k import digest, file_digest, image_payload
+from tools.draw_instruction import replace_snapshot
 
 TASKS = ("reconstruct", "generate", "edit")
 SPLITS = ("train", "validation", "test")
@@ -24,7 +25,8 @@ COLUMNS = {
 }
 
 
-def load_inputs(geo3k: Path | None, synthetic: Path) -> tuple[list[dict], dict]:
+def load_inputs(geo3k: Path | None, synthetic: Path,
+                withheld: dict[str, list[dict]] | None = None) -> tuple[list[dict], dict]:
     rows, inputs = [], {}
     for split in SPLITS if geo3k is not None else ():
         paths = sorted(geo3k.glob(f"{split}-*.parquet"))
@@ -64,6 +66,8 @@ def load_inputs(geo3k: Path | None, synthetic: Path) -> tuple[list[dict], dict]:
                 raise ValueError(f"{path}: task mismatch for {key}")
             provenance = source.get("provenance") or {}
             keys = {"record:" + key}
+            if source.get("source"):
+                keys.add("source:" + source["source"])
             if source.get("source_group"):
                 keys.add("family:" + source["source_group"])
             keys.update("parent:" + parent for parent in provenance.get("parents", []))
@@ -76,6 +80,17 @@ def load_inputs(geo3k: Path | None, synthetic: Path) -> tuple[list[dict], dict]:
                 keys.add("code:" + digest(source["current_tikz"].encode("utf-8")))
             if source.get("rendered_png_sha256"):
                 keys.add("image:" + source["rendered_png_sha256"])
+            if task in ("generate", "edit"):
+                review = source.get("verification")
+                review = review if isinstance(review, dict) else {}
+                if review.get("status") != "ready":
+                    if withheld is not None:
+                        status = review.get("status")
+                        withheld[task].append({"id": key, "status": status if isinstance(status, str)
+                                               else "missing" if status is None else "invalid"})
+                    continue
+                from tools import draw_instruction as drawing
+                drawing.validate_ready_pair(source)
             if task == "reconstruct":
                 from tools import draw_instruction as drawing
                 review = source.get("verification", {})
@@ -171,11 +186,12 @@ def arrow_schema(task: str) -> pa.Schema:
 def write_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    replace_snapshot(temporary, path)
 
 
 def export(geo3k: Path | None, synthetic: Path, output: Path, seed: int = 20261009) -> dict:
-    rows, inputs = load_inputs(geo3k, synthetic)
+    withheld = {task: [] for task in ("generate", "edit")}
+    rows, inputs = load_inputs(geo3k, synthetic, withheld)
     assignments_path = output / "split_assignments.json"
     previous = json.loads(assignments_path.read_text(encoding="utf-8")) if assignments_path.is_file() else {}
     if previous and previous["seed"] != seed:
@@ -200,7 +216,7 @@ def export(geo3k: Path | None, synthetic: Path, output: Path, seed: int = 202610
                            use_content_defined_chunking=True, write_page_index=True)
             if not table.equals(pq.read_table(temporary), check_metadata=True):
                 raise RuntimeError(f"Parquet round-trip mismatch: {path}")
-            temporary.replace(path)
+            replace_snapshot(temporary, path)
             counts[task][split] = len(selected)
             files[str(path.relative_to(output)).replace("\\", "/")] = file_digest(path)
     key_splits = defaultdict(set)
@@ -213,7 +229,14 @@ def export(geo3k: Path | None, synthetic: Path, output: Path, seed: int = 202610
                for row, split in zip(rows, assigned) if row["_pinned"] and row["_pinned"] != split]
     missing = [row["_origin"] for row in rows if row["_task"] == "reconstruct" and row["image"] is None]
     report = {"seed": seed, "counts": counts, "input_sha256": inputs, "output_sha256": files,
-        "all_input_rows_retained": len(rows) == sum(sum(value.values()) for value in counts.values()),
+        "all_input_rows_retained": not any(withheld.values()) and
+            len(rows) == sum(sum(value.values()) for value in counts.values()),
+        "training_ready_rows": len(rows),
+        "withheld_nonready_candidates": {task: {
+            "count": len(candidates),
+            "ids": [candidate["id"] for candidate in candidates],
+            "statuses": dict(Counter(candidate["status"] for candidate in candidates)),
+        } for task, candidates in withheld.items()},
         "rows": len(rows), "groups": groups, "unique_reconstruct_image_ids": len({
             row["id"] for row in rows if row["_task"] == "reconstruct" and row["id"] is not None}),
         "missing_rendered_images": missing, "upstream_split_changes": changed,
@@ -246,8 +269,8 @@ def export(geo3k: Path | None, synthetic: Path, output: Path, seed: int = 202610
         ("Synthetic rows target 80/10/10 per task with a fixed seed while keeping whole groups together, so proportions can differ. "
          "Original parents, source families, linked Generate/Edit rows, matching current/target code, and image hashes "
          "stay in one split. split_assignments.json freezes assignments for subsequent exports."), "",
-        ("Export checks image bindings and lineage; it does not perform mathematical or visual judgment. "
-         "Generate/Edit rows may still await manual review."),
+        ("Only Generate/Edit rows with current independent source/render review evidence are exported. "
+         "Nonready candidates and their statuses are listed in export_report.json. The export validates recorded evidence bindings; it does not conduct the mathematical or visual review."),
         "", ("Source snapshot: dataset/synthetic/{generate,edit}.jsonl and reconstruct/candidates.jsonl "
                "(or explicitly requested legacy Geo3K inputs)."),
         ("Format: [HF configurations](https://huggingface.co/docs/hub/datasets-manual-configuration) and "

@@ -226,13 +226,11 @@ def refresh(root, write=False):
         ]
         if not item['sources']: continue
         item['grades'] = sorted({s['grade'] for s in item['sources']})
-        item['diagram_types'] = sorted({t for s in item['sources'] for t in s['diagram_types']})
         images.append(item)
     data['images'] = images
     stats = data['statistics']
     stats['selected_images'] = len(images)
     stats['selected_source_crops'] = sum(r['decision'] == 'selected' for r in retained.values())
-    stats['images_by_type'] = dict(sorted(Counter(t for im in images for t in im['diagram_types']).items()))
     stats['decisions']['images'] = dict(Counter(r['decision'] for r in retained.values()))
     for grade, counts in stats['by_grade'].items():counts['images'] = sum(int(grade) in im['grades'] for im in images)
     for path, content in outputs.items():data['source_manifests'][path.name] = hashlib.sha256(content).hexdigest()

@@ -127,6 +127,10 @@ def test_load_pool_verifies_source_text_locator_and_hash(tmp_path, monkeypatch):
     assert sources["source-a"]["source_text"] == "A mathematical example."
     assert sources["source-a"]["diagram_types"] == ["G03"]
     assert batches == [{"batch_id": "triangle", "problem_ids": ["source-a"]}]
+    selected.pop("source_group")
+    selected["diagram_types"] = None
+    _write_jsonl(path, [selected])
+    assert author.load_pool(path)[0]["source-a"]["source_group"] == "source-a"
     selected["source_sha256"] = "0" * 64
     _write_jsonl(path, [selected])
     with pytest.raises(ValueError, match="Stale source audit hash"):
@@ -135,8 +139,10 @@ def test_load_pool_verifies_source_text_locator_and_hash(tmp_path, monkeypatch):
 
 def test_author_payload_contains_only_compact_task_specific_context():
     base = _base()
-    selected = [SOURCES[SOURCE_A], SOURCES[SOURCE_B]]
+    selected = [{**SOURCES[SOURCE_A], "givens": "Extra audit facts", "auxiliaries": ["Audit construction"]},
+                SOURCES[SOURCE_B]]
     starts = [{"id": base["id"], "instruction": base["instruction"],
+               "current_tikz": base["target_tikz"],
                "source_group": base["source_group"], "parents": [SOURCE_A], "grade": 8,
                "diagram_types": ["G03"]}]
     context = _context(task="both", selected=selected, starts=starts, total=12,
@@ -145,21 +151,27 @@ def test_author_payload_contains_only_compact_task_specific_context():
     payload = author.author_payload(context)
 
     assert payload == [
-        {"source": SOURCE_A, "source_text": SOURCES[SOURCE_A]["source_text"]},
+        {"source": SOURCE_A, "source_text": SOURCES[SOURCE_A]["source_text"],
+         "givens": "Extra audit facts", "auxiliaries": ["Audit construction"]},
         {"source": SOURCE_B, "source_text": SOURCES[SOURCE_B]["source_text"]},
-        {"source": base["id"], "givens": base["instruction"]},
+        {"source": base["id"], "givens": base["instruction"], "current_tikz": TIKZ},
     ]
     encoded = json.dumps(payload, ensure_ascii=False)
-    for hidden in ("source_sha256", "source_path", "locator", "reason", "diagram_types", "target_tikz", "request"):
+    for hidden in ("source_sha256", "source_path", "locator", "reason", "diagram_types", "target_tikz", "reviewed_by", "request"):
         assert hidden not in encoded
-    assert TIKZ not in encoded
-    assert set(payload[0]) == {"source", "source_text"}
-    assert set(payload[2]) == {"source", "givens"}
+    assert payload[2]["current_tikz"] == TIKZ
+    assert set(payload[0]) == {"source", "source_text", "givens", "auxiliaries"}
+    assert set(payload[2]) == {"source", "givens", "current_tikz"}
+
+    altered = {**context, "available_starts": [{**starts[0], "current_tikz": TIKZ + "% altered"}]}
+    with pytest.raises(ValueError, match="Checked start does not match"):
+        author.validate_contexts([altered], {row["id"]: row for row in selected}, {base["id"]: base})
 
 
 def test_materialize_uses_exact_source_and_base_ids_for_local_provenance():
     base = _base()
     starts = [{"id": base["id"], "instruction": base["instruction"],
+               "current_tikz": base["target_tikz"],
                "source_group": base["source_group"], "parents": [SOURCE_A], "grade": 8,
                "diagram_types": ["G03"]}]
     context = _context(task="both", selected=list(SOURCES.values()), starts=starts, total=4,
@@ -179,8 +191,10 @@ def test_materialize_uses_exact_source_and_base_ids_for_local_provenance():
     generated, generated_b, edited = rows
     assert generated["provenance"]["parents"] == [SOURCE_A]
     assert generated_b["provenance"]["parents"] == [SOURCE_B]
-    assert generated["diagram_types"] is None
-    assert generated["provenance"]["parent_sources"][SOURCE_A]["diagram_types"] == ["G03"]
+    assert not {"grade", "diagram_types", "book", "book_role", "source_kind", "source_path",
+                "source_location", "image_paths"}.intersection(generated)
+    assert set(generated["provenance"]["parent_sources"][SOURCE_A]) == {
+        "source_path", "source_sha256", "source_text_sha256", "locator"}
     assert "target_tikz" not in generated
     assert edited["current_tikz"] == TIKZ
     assert edited["provenance"]["parents"] == [SOURCE_A]
@@ -234,31 +248,97 @@ def test_generate_sends_compact_array_and_checkpoints_full_local_provenance(tmp_
     assert result["status"] == "completed" and result["response_format"] == "tool_call"
     assert result["usage"]["total_tokens"] == 21
     assert len(result["rows"]) == 2 and report["instruction_candidates"] == {"Generate": 2}
-    assert all(row["diagram_types"] is None for row in result["rows"])
+    assert all("grade" not in row and "diagram_types" not in row for row in result["rows"])
     assert TIKZ not in (output / "generate-inputs.jsonl").read_text(encoding="utf-8")
 
 
-def test_edit_payload_hides_tikz_and_materializer_copies_exact_base(tmp_path):
+def test_save_instructions_requires_positive_supervision_and_retains_raw_rows(tmp_path):
+    sources = {"source": {"id": "source", "source_group": "family"}}
+    rows = [
+        {"id": "usable", "task": "Generate", "instruction": "Triangle ABC has AB = AC.",
+         "current_tikz": None, "provenance": {"parents": ["source"]}},
+        {"id": "revise", "task": "Generate", "instruction": "Triangle DEF has DE = DF.",
+         "current_tikz": None, "provenance": {"parents": ["source"]}},
+        {"id": "unreviewed", "task": "Generate", "instruction": "Triangle GHI has GH = GI.",
+         "current_tikz": None, "provenance": {"parents": ["source"]}},
+    ]
+    checkpoints = [{"status": "completed", "rows": rows}]
+    report = author.save_instructions(tmp_path, checkpoints, sources)
+    assert report["instruction_review_pending"] == 3
+    assert report["caller_inputs"] == {"Generate": 0, "Edit": 0}
+    assert [row["id"] for row in author.jsonl(tmp_path / "instructions.jsonl")] == [row["id"] for row in rows]
+    assert author.jsonl(tmp_path / "generate-inputs.jsonl") == []
+
+    supervision = {"rows": [
+        {"id": "usable", "decision": "usable_instruction", "reason": "Complete self-contained givens."},
+        {"id": "revise", "decision": "needs_revision", "reason": "The source condition is incomplete."},
+    ]}
+    (tmp_path / "supervision.json").write_text(json.dumps(supervision), encoding="utf-8")
+    report = author.save_instructions(tmp_path, checkpoints, sources)
+    assert report["instruction_review_pending"] == 1
+    assert report["caller_inputs"] == {"Generate": 1, "Edit": 0}
+    assert [row["id"] for row in author.jsonl(tmp_path / "generate-inputs.jsonl")] == ["usable"]
+    assert [row["id"] for row in author.jsonl(tmp_path / "instructions.jsonl")] == [row["id"] for row in rows]
+
+    supervision["rows"].append(
+        {"id": "unreviewed", "decision": "needs_review", "reason": "The construction branch cannot be established."})
+    (tmp_path / "supervision.json").write_text(json.dumps(supervision), encoding="utf-8")
+    report = author.save_instructions(tmp_path, checkpoints, sources)
+    assert report["instruction_review_pending"] == 0
+    assert report["review_held_instructions"] == 2
+    assert report["caller_inputs"] == {"Generate": 1, "Edit": 0}
+    assert [row["id"] for row in author.jsonl(tmp_path / "generate-inputs.jsonl")] == ["usable"]
+    assert [row["id"] for row in author.jsonl(tmp_path / "instructions.jsonl")] == [row["id"] for row in rows]
+
+
+@pytest.mark.parametrize("negative_decision", ["needs_revision", "needs_review"])
+def test_negative_supervision_vetoes_duplicate_usable_instruction(tmp_path, negative_decision):
+    sources = {"source": {"id": "source", "source_group": "family"}}
+    shared = {"task": "Generate", "instruction": "Triangle ABC has AB = AC.",
+              "current_tikz": None, "provenance": {"parents": ["source"]}}
+    rows = [{"id": "usable", **shared}, {"id": "held", **shared}]
+    checkpoints = [{"status": "completed", "rows": rows}]
+    (tmp_path / "supervision.json").write_text(json.dumps({"rows": [
+        {"id": "usable", "decision": "usable_instruction", "reason": "Complete source facts."},
+        {"id": "held", "decision": negative_decision, "reason": "This item is not approved."},
+    ]}), encoding="utf-8")
+
+    report = author.save_instructions(tmp_path, checkpoints, sources)
+
+    assert report["instruction_review_pending"] == 0
+    assert report["review_held_instructions"] == 1
+    assert report["caller_inputs"] == {"Generate": 0, "Edit": 0}
+    assert author.jsonl(tmp_path / "generate-inputs.jsonl") == []
+    assert len(author.jsonl(tmp_path / "instructions.jsonl")) == 1
+
+
+def test_edit_payload_includes_exact_starting_tikz_and_materializer_copies_exact_base(tmp_path):
     base = _base()
     starts = [{"id": base["id"], "instruction": base["instruction"],
+               "current_tikz": base["target_tikz"],
                "source_group": base["source_group"], "parents": [SOURCE_A], "grade": 8,
                "diagram_types": ["G03"]}]
     context = _context(task="Edit", starts=starts, total=1)
-    payload_expected = [{"source": base["id"], "givens": base["instruction"]}]
+    payload_expected = [{"source": base["id"], "givens": base["instruction"], "current_tikz": TIKZ}]
     complete = base["instruction"] + "; P là trung điểm BC."
 
     def invoke(messages):
         _, payload = _messages(messages)
-        assert payload == payload_expected and TIKZ not in json.dumps(payload)
+        assert payload == payload_expected and payload[0]["current_tikz"] == TIKZ
         return _response(_batch([_instruction("Edit", base["id"], "P là trung điểm BC.", complete)]), "edit")
 
     output = tmp_path / "edit-run"
     author.generate([context], output, model=FakeCPA(invoke), sources=SOURCES, bases={base["id"]: base}, workers=1)
+    raw_rows = author.jsonl(output / "instructions.jsonl")
+    (output / "supervision.json").write_text(json.dumps({"rows": [
+        {"id": raw_rows[0]["id"], "decision": "usable_instruction", "reason": "Edit is a meaningful local change."}]}),
+        encoding="utf-8")
+    author.save_instructions(output, [{"status": "completed", "rows": raw_rows}], SOURCES)
     row = author.jsonl(output / "edit-inputs.jsonl")[0]
     assert row["current_tikz"] == TIKZ
     assert row["provenance"]["starting_record_id"] == base["id"]
     assert row["provenance"]["complete_instruction"] == complete
-    assert row["diagram_types"] is None
+    assert "grade" not in row and "diagram_types" not in row
 
 
 def test_fenced_json_fallback_is_schema_checked_and_usage_is_preserved(tmp_path):
@@ -344,7 +424,8 @@ def test_curated_text_is_bound_to_raw_source_but_only_clean_text_reaches_model(t
     _write_jsonl(path, [row])
     sources, batches, _ = author.load_pool(path)
     context = author.build_contexts(sources, batches, calls=1, rows_per_call=12, task="Generate", seed=42)[0]
-    assert author.author_payload(context) == [{"source": "curated-1", "source_text": row["source_text"]}]
+    assert author.author_payload(context) == [{"source": "curated-1", "source_text": row["source_text"],
+                                               "givens": row["givens"]}]
     assert sources["curated-1"]["grade"] is None and sources["curated-1"]["diagram_types"] is None
     row["raw_source_text"] = "An unaudited replacement"
     _write_jsonl(path, [row])
@@ -397,6 +478,7 @@ def test_mixed_task_batch_bounds_model_inputs_without_dropping_edit_parent_linea
     assert len(payload) == 5
     assert sum("source_text" in row for row in payload) == 4
     assert sum("givens" in row for row in payload) == 1
+    assert payload[-1]["current_tikz"] == base["target_tikz"]
     assert SOURCE_A in {row["id"] for row in context["sources"]}
 
 
@@ -406,3 +488,82 @@ def test_reference_duplicates_rotate_without_occupying_multiple_context_slots():
     chosen = author.sample_inputs(references, 10, random.Random(1), Counter({"first": 3}))
     assert {row["id"] for row in chosen} == {"copy", "other"}
     assert chosen[0]["id"] == "other"
+
+
+def test_generate_payload_preserves_checked_context_without_review_metadata():
+    source = {**SOURCES[SOURCE_A], "givens": "ABC right at A; AB<AC; H is the foot on BC.",
+              "auxiliaries": ["I is midpoint AH; K is midpoint HB."],
+              "verification": {"status": "ready"}, "target_tikz": TIKZ}
+    payload = author.author_payload(_context(selected=[source]))
+    assert payload == [{"source": SOURCE_A, "source_text": source["source_text"],
+                        "givens": source["givens"], "auxiliaries": source["auxiliaries"]}]
+    givens_only = {key: value for key, value in source.items() if key != "source_text"}
+    assert author.author_payload(_context(selected=[givens_only])) == [
+        {"source": SOURCE_A, "givens": source["givens"], "auxiliaries": source["auxiliaries"]}]
+
+
+def test_edit_cannot_repeat_the_whole_starting_instruction():
+    base = _base()
+    start = {"id": base["id"], "instruction": base["instruction"], "current_tikz": base["target_tikz"],
+             "source_group": base["source_group"], "parents": base["provenance"]["parents"],
+             "grade": base["grade"], "diagram_types": base["diagram_types"]}
+    context = _context(task="Edit", starts=[start])
+    draft = _instruction("Edit", base["id"], "  " + base["instruction"] + "  ", base["instruction"])
+    rows, rejected = author.materialize(_batch([draft]), context, "digest", "trace", {base["id"]: base})
+    assert rows == [] and "repeats the complete starting instruction" in rejected[0]["reason"]
+
+
+def test_user_source_exclusions_block_planning_and_stale_positive_queue(tmp_path, monkeypatch):
+    path = tmp_path / "excluded.json"
+    path.write_text(json.dumps([SOURCE_A]), encoding="utf-8")
+    monkeypatch.setattr(author, "EXCLUDED_SOURCES_PATH", path)
+    batches = [{"problem_ids": [SOURCE_A, SOURCE_B]}]
+    contexts = author.build_contexts(SOURCES, batches, calls=1, rows_per_call=2,
+                                    task="Generate", seed=7)
+    assert [row["id"] for row in contexts[0]["sources"]] == [SOURCE_B]
+    with pytest.raises(ValueError, match="user-excluded"):
+        author.build_contexts(SOURCES, batches, calls=1, rows_per_call=1,
+                              task="Generate", seed=7, source_ids=[SOURCE_A])
+    with pytest.raises(ValueError, match="user-excluded"):
+        author.validate_contexts([_context()], SOURCES, {})
+    rows, _ = author.materialize(_batch([_instruction("Generate", SOURCE_A, "Triangle ABC.")]),
+                                _context(), "digest", "trace", {})
+    author.save_json(tmp_path / "supervision.json", {"rows": [
+        {"id": rows[0]["id"], "decision": "usable_instruction", "reason": "Old approval."}]})
+    before = (tmp_path / "supervision.json").read_bytes()
+    report = author.save_instructions(tmp_path, [{"status": "completed", "rows": rows}], SOURCES)
+    assert report["user_excluded_instructions"] == 1
+    assert report["caller_inputs"] == {"Generate": 0, "Edit": 0}
+    assert len(author.jsonl(tmp_path / "instructions.jsonl")) == 1
+    assert (tmp_path / "supervision.json").read_bytes() == before
+
+
+def test_source_exclusion_file_fails_closed_on_invalid_data(tmp_path, monkeypatch):
+    path = tmp_path / "excluded.json"
+    path.write_text('{"source": true}', encoding="utf-8")
+    monkeypatch.setattr(author, "EXCLUDED_SOURCES_PATH", path)
+    with pytest.raises(ValueError, match="JSON list"):
+        author.excluded_source_ids()
+
+
+def test_specific_instruction_exclusion_preserves_other_source_constructions(tmp_path, monkeypatch):
+    path = tmp_path / "excluded-instructions.json"
+    path.write_text(json.dumps([{"task": "Generate", "instruction": "Triangle ABC.",
+                                 "parents": [SOURCE_A]}]), encoding="utf-8")
+    monkeypatch.setattr(author, "EXCLUDED_INSTRUCTIONS_PATH", path)
+    batch = _batch([_instruction("Generate", SOURCE_A, "Triangle  ABC."),
+                    _instruction("Generate", SOURCE_A, "Triangle ABC with altitude AH.")])
+    rows, rejected = author.materialize(batch, _context(), "digest", "trace", {})
+    assert len(rows) == len(rejected) == 1
+    assert "user-excluded" in rejected[0]["reason"]
+    assert rows[0]["instruction"] == "Triangle ABC with altitude AH."
+    old = {**rows[0], "id": "old-positive", "instruction": "Triangle ABC."}
+    author.save_json(tmp_path / "supervision.json", {"rows": [
+        {"id": old["id"], "decision": "usable_instruction", "reason": "Old approval."}]})
+    report = author.save_instructions(tmp_path, [{"status": "completed", "rows": [old]}], SOURCES)
+    assert report["user_excluded_instructions"] == 1
+    assert report["caller_inputs"] == {"Generate": 0, "Edit": 0}
+    allowed, rejected = author.materialize(
+        _batch([_instruction("Generate", SOURCE_B, "Triangle ABC.")]),
+        _context(selected=[SOURCES[SOURCE_B]]), "other", "trace", {})
+    assert len(allowed) == 1 and rejected == []

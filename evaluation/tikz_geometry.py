@@ -11,8 +11,7 @@ import numpy as np
 from shapely.geometry import LineString, Point
 
 from evaluation.tikz_coverage import connections
-
-REL_TOL = 0.005
+from evaluation.tikz_marks import REL_TOL, line_position as _line_position, mark_truth, observe_marks
 
 
 def _curve(points: list[tuple[float, float]], tolerance: float = 0.08, depth: int = 0) -> list[tuple[float, float]]:
@@ -59,11 +58,12 @@ def path_parts(drawing: Mapping[str, Any], *, curve_tolerance: float = 0.08) -> 
 
 
 
-def measure_circle(part: Sequence[tuple[float, float]]) -> dict[str, Any] | None:
-    """Measure a closed circular stroke, never a circle inferred from named points."""
-    if len(part) < 16 or not LineString(part).is_ring:
+def measure_circular_path(part: Sequence[tuple[float, float]]) -> dict[str, Any] | None:
+    """Fit an emitted circle or circular arc, retaining its actual path interval."""
+    if len(part) < 16:
         return None
-    raw = np.asarray(part[:-1], dtype=float)
+    closed = LineString(part).is_ring
+    raw = np.asarray(part[:-1] if closed else part, dtype=float)
     origin = raw.mean(axis=0)
     scale = float(np.max(np.abs(raw - origin)))
     if not math.isfinite(scale) or scale <= 0:
@@ -72,18 +72,23 @@ def measure_circle(part: Sequence[tuple[float, float]]) -> dict[str, Any] | None
     try:
         parameters, _, rank, _ = np.linalg.lstsq(np.column_stack((2 * xy, np.ones(len(xy)))), (xy * xy).sum(axis=1), rcond=None)
     except np.linalg.LinAlgError as error:
-        raise ValueError("Circle measurement did not converge") from error
+        raise ValueError("Circular path measurement did not converge") from error
     radius_squared = float(parameters[2] + parameters[:2] @ parameters[:2])
     if rank != 3 or radius_squared <= 0:
         return None
     radius = math.sqrt(radius_squared)
-    # Include chord interiors so a sparse polygon cannot masquerade as a circle.
-    samples = np.concatenate((xy, (xy + np.roll(xy, -1, axis=0)) / 2))
+    # Test chord interiors as well: a sparse polygon is not a circular stroke.
+    adjacent = np.concatenate((xy, xy[:1])) if closed else xy
+    samples = np.concatenate((xy, (adjacent[:-1] + adjacent[1:]) / 2))
     residual = float(np.max(np.abs(np.linalg.norm(samples - parameters[:2], axis=1) / radius - 1)))
-    if not math.isfinite(residual) or residual > REL_TOL:
+    angles = np.unwrap(np.arctan2(adjacent[:, 1] - parameters[1], adjacent[:, 0] - parameters[0]))
+    sweep = float(angles[-1] - angles[0])
+    if (not math.isfinite(residual) or residual > REL_TOL or abs(sweep) < math.pi / 12
+            or abs(sweep) > 2 * math.pi + REL_TOL or np.any(np.diff(angles) * sweep < -1e-8)):
         return None
     return {"center": (origin + parameters[:2] * scale).tolist(), "radius": radius * scale,
-            "radial_residual": residual, "unit": "pdf_pt", "frame": "original_pdf"}
+            "closed": closed, "start": list(part[0]), "end": list(part[-1]), "sweep": sweep,
+            "radial_residual": residual}
 
 
 def _assign_circles(errors: list[list[float]], target: list[dict], output: list[dict]) -> tuple:
@@ -109,169 +114,211 @@ def _assign_circles(errors: list[list[float]], target: list[dict], output: list[
 
 
 
-def _line_position(a: np.ndarray, b: np.ndarray, p: np.ndarray) -> tuple[float, float]:
-    vector, offset = b - a, p - a
-    squared = float(vector @ vector)
-    if squared == 0:
-        return math.inf, math.inf
-    return float(offset @ vector / squared), abs(float(vector[0] * offset[1] - vector[1] * offset[0])) / squared
+def _arc_position(path: dict, point: np.ndarray) -> float:
+    """Fraction along a measured arc; endpoint tolerance is symmetric at the wrap."""
+    center = np.asarray(path['center'])
+    start, offset = np.asarray(path['start']) - center, point - center
+    angle = math.atan2(float(start[0] * offset[1] - start[1] * offset[0]), float(start @ offset))
+    angle *= 1 if path['sweep'] > 0 else -1
+    if angle < -REL_TOL:
+        angle += 2 * math.pi
+    return angle / abs(path['sweep'])
 
 
-def _right_angles(scene: dict[str, Any], edges: list[dict]) -> set[tuple[str, str, str]]:
-    """Bind a small square corner marker to its vertex and two painted named rays."""
-    points = {name: np.asarray(p) for name, p in scene['points'].items()}
-    junctions = {}
-    for stroke in scene.get('strokes', []):
-        for part in stroke.get('components', [stroke['geometry']]):
-            if part.geom_type == 'LineString' and len(part.coords) == 2:
-                a, b = map(tuple, part.coords)
-                if a != b:
-                    junctions.setdefault(a, set()).add(b)
-                    junctions.setdefault(b, set()).add(a)
-    angles = set()
-    for corner, endpoints in junctions.items():
-        corner = np.asarray(corner)
-        for first, second in combinations(sorted(endpoints), 2):
-            a, b = np.asarray(first), np.asarray(second)
-            u, v = a - corner, b - corner
-            size = max(np.linalg.norm(u), np.linalg.norm(v))
-            if abs(float(u @ v)) > REL_TOL * np.linalg.norm(u) * np.linalg.norm(v):
-                continue
-            vertex = a + b - corner
-            for name, p in points.items():
-                if np.linalg.norm(vertex - p) > size * REL_TOL:
-                    continue
-                rays = []
-                for endpoint in (a, b):
-                    candidates = []
-                    for edge in edges:
-                        for other in edge['points']:
-                            if other == name:
-                                continue
-                            q = points[other]
-                            t, error = _line_position(p, q, endpoint)
-                            e0, e1 = (points[label] for label in edge['points'])
-                            base_t, base_error = _line_position(e0, e1, p)
-                            if error <= REL_TOL and 0 < t < 0.5 and base_error <= REL_TOL and -REL_TOL <= base_t <= 1 + REL_TOL:
-                                candidates.append((np.linalg.norm(q - p), other))
-                    if candidates:
-                        rays.append(max(candidates)[1])
-                if len(rays) == 2 and rays[0] != rays[1]:
-                    left, right = sorted(rays)
-                    angles.add((left, name, right))
-    return angles
-
-
-def _circle_error(reference: dict, drawn: dict, points: dict, produced: dict, edges: list[dict]) -> float:
-    """Compare a circle's relations, allowing its radius to follow changed free points."""
+def _circular_error(reference: dict, drawn: dict, points: dict, produced: dict, edges: list[dict]) -> float:
+    """A circular object's relations may follow moving free points."""
+    if reference.get('closed', True) != drawn.get('closed', True):
+        return math.inf
     center, other = np.asarray(reference['center']), np.asarray(drawn['center'])
     radius, actual_radius = reference['radius'], drawn['radius']
-    errors = []
+    errors, boundary = [], []
     for name, p in points.items():
         distance = np.linalg.norm(p - center) / radius
-        if distance <= REL_TOL or abs(distance - 1) <= REL_TOL:
+        on_arc = reference.get('closed', True) or -REL_TOL <= _arc_position(reference, p) <= 1 + REL_TOL
+        if distance <= REL_TOL or (abs(distance - 1) <= REL_TOL and on_arc):
             actual = np.linalg.norm(produced[name] - other) / actual_radius if name in produced else math.inf
             errors.append(float(actual if distance <= REL_TOL else abs(actual - 1)))
+            if distance > REL_TOL:
+                boundary.append(name)
     for a, b in combinations(points, 2):
         if abs(np.linalg.norm(points[b] - points[a]) / radius - 1) <= REL_TOL:
             errors.append(abs(np.linalg.norm(produced[b] - produced[a]) / actual_radius - 1)
                           if a in produced and b in produced else math.inf)
     for edge in edges:
         a, b = edge['points']
-        _, error = _line_position(points[a], points[b], center)
-        if abs(error * np.linalg.norm(points[b] - points[a]) / radius - 1) <= REL_TOL:
+        t, error = _line_position(points[a], points[b], center)
+        foot = points[a] + t * (points[b] - points[a])
+        on_arc = reference.get('closed', True) or -REL_TOL <= _arc_position(reference, foot) <= 1 + REL_TOL
+        if on_arc and abs(error * np.linalg.norm(points[b] - points[a]) / radius - 1) <= REL_TOL:
             if a not in produced or b not in produced:
                 errors.append(math.inf)
             else:
-                _, actual = _line_position(produced[a], produced[b], other)
+                actual_t, actual = _line_position(produced[a], produced[b], other)
                 errors.append(abs(actual * np.linalg.norm(produced[b] - produced[a]) / actual_radius - 1)
                               if math.isfinite(actual) else math.inf)
+                if not drawn.get('closed', True) and math.isfinite(actual_t):
+                    position = _arc_position(drawn, produced[a] + actual_t * (produced[b] - produced[a]))
+                    errors.append(max(0, -position, position - 1))
+    if not reference.get('closed', True):
+        endpoints = [sorted(name for name, p in points.items()
+                            if np.linalg.norm(p - reference[end]) / radius <= REL_TOL) for end in ('start', 'end')]
+        if not all(endpoints):
+            raise ValueError('Reference arc endpoints must be bound to named points')
+        if not all(names[0] in produced for names in endpoints):
+            return math.inf
+        a, b = (produced[names[0]] for names in endpoints)
+        direct = max(np.linalg.norm(a - drawn['start']), np.linalg.norm(b - drawn['end']))
+        reverse = max(np.linalg.norm(a - drawn['end']), np.linalg.norm(b - drawn['start']))
+        errors.append(min(direct, reverse) / actual_radius)
+        order = sorted(boundary, key=lambda name: _arc_position(reference, points[name]))
+        if any(name not in produced for name in order):
+            return math.inf
+        positions = [_arc_position(drawn, produced[name]) for name in order]
+        if reverse < direct:
+            positions = [1 - position for position in positions]
+        errors += [max(0, -position, position - 1) for position in positions]
+        errors += [max(0, a - b) for a, b in zip(positions, positions[1:])]
+        expected_span, actual_span = abs(reference['sweep']) - math.pi, abs(drawn['sweep']) - math.pi
+        if abs(expected_span) <= REL_TOL:
+            errors.append(abs(actual_span))
+        elif expected_span * actual_span <= 0:
+            errors.append(math.inf)
     if not errors and points:
-        raise ValueError('Reference circle has no named center, boundary point, radius segment or tangent')
+        raise ValueError('Reference circular path has no named center, boundary point, radius segment or tangent')
     return float(max(errors, default=0.0))
 
 
+def _line_groups(points: dict[str, np.ndarray]) -> list[tuple[str, ...]]:
+    """One maximal named line, regardless of path splitting or the number of triples."""
+    groups = set()
+    for a, b in combinations(points, 2):
+        if np.linalg.norm(points[b] - points[a]) == 0:
+            continue
+        names = frozenset(name for name, p in points.items() if _line_position(points[a], points[b], p)[1] <= REL_TOL)
+        if len(names) >= 3:
+            groups.add(names)
+    return sorted(tuple(sorted(group)) for group in groups if not any(group < other for other in groups))
+
+
 def compare_geometry(target: dict[str, Any], output: dict[str, Any]) -> tuple[list[bool], list[int | None]]:
-    """One vote per observed relation; all requirements come from the target alone."""
+    """Canonical target relations, with degeneracy checked inside each relation."""
     points = {name: np.asarray(p, dtype=float) for name, p in target['points'].items()}
     produced = {name: np.asarray(p, dtype=float) for name, p in output['points'].items() if p is not None and name in points}
     pairs = list(combinations(sorted(points), 2))
     extent = max((np.linalg.norm(points[b] - points[a]) for a, b in pairs), default=0.0)
     actual_extent = max((np.linalg.norm(produced[b] - produced[a]) for a, b in pairs if a in produced and b in produced), default=0.0)
     checks = []
-    for a, b in pairs:
-        coincident = np.linalg.norm(points[b] - points[a]) <= extent * 1e-8
-        checks.append(a in produced and b in produced and
-                      (np.linalg.norm(produced[b] - produced[a]) <= actual_extent * 1e-8) == coincident)
-
-    nondegenerate = []
-    for names in combinations(points, 3):
-        a, b = max(combinations(names, 2), key=lambda pair: np.linalg.norm(points[pair[1]] - points[pair[0]]))
-        c = next(name for name in names if name not in (a, b))
-        if np.linalg.norm(points[b] - points[a]) <= extent * 1e-8:
-            continue
-        t, error = _line_position(points[a], points[b], points[c])
-        complete = all(name in produced for name in names)
-        actual_t, actual_error = _line_position(produced[a], produced[b], produced[c]) if complete else (math.inf, math.inf)
-        if error <= REL_TOL:
-            # A midpoint is a relation; a generic foot's division ratio is not fixed.
-            midpoint = abs(t - 0.5) <= REL_TOL
-            checks.append(complete and actual_error <= REL_TOL and (not midpoint or abs(actual_t - 0.5) <= REL_TOL))
-        else:
-            nondegenerate.append(complete and math.isfinite(actual_error) and actual_error > 1e-6)
-    if nondegenerate:
-        checks.append(all(nondegenerate))
+    coincident = {frozenset(name for name, q in points.items() if np.linalg.norm(p - q) <= extent * 1e-8)
+                  for p in points.values()}
+    for names in sorted(tuple(sorted(group)) for group in coincident if len(group) > 1):
+        checks.append(all(name in produced for name in names) and
+                      all(np.linalg.norm(produced[b] - produced[a]) <= actual_extent * 1e-8
+                          for a, b in combinations(names, 2)))
 
     edges = connections(target) if target.get('strokes') else []
-    for edge in edges:
-        a, b = edge['points']
-        for name in points.keys() - {a, b}:
-            t, error = _line_position(points[a], points[b], points[name])
-            if error <= REL_TOL and 0 < t < 1:
-                actual_t, actual_error = (_line_position(produced[a], produced[b], produced[name])
-                                          if all(p in produced for p in (a, b, name)) else (math.inf, math.inf))
-                checks.append(actual_error <= REL_TOL and -REL_TOL <= actual_t <= 1 + REL_TOL)
-    for first, second in combinations(edges, 2):
-        a, b = first['points']
-        c, d = second['points']
-        u, v = points[b] - points[a], points[d] - points[c]
-        lengths = np.linalg.norm(u), np.linalg.norm(v)
-        cross = abs(float(u[0] * v[1] - u[1] * v[0])) / (lengths[0] * lengths[1])
-        if cross <= REL_TOL and _line_position(points[a], points[b], points[c])[1] > REL_TOL:
-            if not all(name in produced for name in (a, b, c, d)):
-                checks.append(False)
+    for names in _line_groups(points):
+        complete = all(name in produced for name in names)
+        on_line = False
+        if complete:
+            a, b = max(combinations(names, 2), key=lambda pair: np.linalg.norm(produced[pair[1]] - produced[pair[0]]))
+            on_line = all(_line_position(produced[a], produced[b], produced[name])[1] <= REL_TOL for name in names)
+        # Keep segment membership, but do not freeze the total order of free feet.
+        for edge in edges:
+            u, v = edge['points']
+            if u not in names or v not in names:
                 continue
-            actual_u, actual_v = produced[b] - produced[a], produced[d] - produced[c]
-            actual_lengths = np.linalg.norm(actual_u), np.linalg.norm(actual_v)
-            valid = min(actual_lengths) > 0
-            if valid:
-                valid = abs(float(actual_u[0] * actual_v[1] - actual_u[1] * actual_v[0])) <= REL_TOL * actual_lengths[0] * actual_lengths[1]
-                if abs(lengths[0] / lengths[1] - 1) <= REL_TOL:
-                    sign = 1 if float(u @ v) > 0 else -1
-                    valid = valid and np.linalg.norm(actual_u - sign * actual_v) <= REL_TOL * max(actual_lengths)
-            checks.append(bool(valid))
-    for a, vertex, b in sorted(_right_angles(target, edges)):
-        if not all(name in produced for name in (a, vertex, b)):
-            checks.append(False)
-            continue
-        u, v = produced[a] - produced[vertex], produced[b] - produced[vertex]
-        product = np.linalg.norm(u) * np.linalg.norm(v)
-        checks.append(product > 0 and abs(float(u @ v)) <= REL_TOL * product)
+            for name in set(names) - {u, v}:
+                position, _ = _line_position(points[u], points[v], points[name])
+                if 1e-8 < position < 1 - 1e-8:
+                    actual, _ = _line_position(produced[u], produced[v], produced[name]) if complete else (math.inf, math.inf)
+                    on_line = on_line and 1e-8 < actual < 1 - 1e-8
+        checks.append(on_line)
+        for u, v in combinations(names, 2):
+            if np.linalg.norm(points[v] - points[u]) <= extent * 1e-8:
+                continue
+            for name in set(names) - {u, v}:
+                if np.linalg.norm(2 * points[name] - points[u] - points[v]) <= REL_TOL * np.linalg.norm(points[v] - points[u]):
+                    checks.append(all(n in produced for n in (u, v, name)) and
+                                  np.linalg.norm(produced[v] - produced[u]) > actual_extent * 1e-8 and
+                                  np.linalg.norm(2 * produced[name] - produced[u] - produced[v]) <=
+                                  REL_TOL * np.linalg.norm(produced[v] - produced[u]))
 
-    circles, drawn = target.get('circles', []), output.get('circles', [])
-    if not circles:
-        return [bool(check) for check in checks], []
-    # ponytail: exact circle assignment is bounded to 12; use a polynomial solver if needed.
-    if len(circles) > 12:
-        raise ValueError('Reference exceeds the 12-circle matching limit')
-    if len(circles) > 1 and extent == 0:
-        raise ValueError('Multiple reference circles require two distinct named points')
-    for circle in circles:
-        _circle_error(circle, circle, points, points, edges)
-    if len(drawn) > 12:
-        return [bool(check) for check in checks] + [False] * len(circles), [None] * len(circles)
-    errors = [[_circle_error(circle, item, points, produced, edges) for item in drawn] for circle in circles]
-    indices = _assign_circles(errors, circles, drawn)[-1]
-    matches = [j if j < len(drawn) else None for j in indices]
-    checks += [j is not None and errors[i][j] <= REL_TOL for i, j in enumerate(matches)]
+    directions = []
+    for names in sorted({tuple(edge['points']) for edge in edges}):
+        a, b = names
+        vector = points[b] - points[a]
+        unit = vector / np.linalg.norm(vector)
+        for group in directions:
+            u, v = group[0]
+            other = points[v] - points[u]
+            if abs(float(unit[0] * other[1] - unit[1] * other[0])) <= REL_TOL * np.linalg.norm(other):
+                group.append(names)
+                break
+        else:
+            directions.append([names])
+    for group in directions:
+        if len(group) < 2:
+            continue
+        a, b = group[0]
+        if all(_line_position(points[a], points[b], points[u])[1] <= REL_TOL for u, _ in group):
+            continue
+        vectors = [produced[v] - produced[u] if u in produced and v in produced else np.zeros(2) for u, v in group]
+        lengths = [np.linalg.norm(vector) for vector in vectors]
+        checks.append(min(lengths) > 0 and all(abs(float(vectors[0][0] * v[1] - vectors[0][1] * v[0])) <=
+                                               REL_TOL * lengths[0] * length for v, length in zip(vectors[1:], lengths[1:])))
+        equal_groups = []
+        for index, (u, v) in enumerate(group):
+            length = np.linalg.norm(points[v] - points[u])
+            for expected, indices in equal_groups:
+                if abs(length / expected - 1) <= REL_TOL:
+                    indices.append(index)
+                    break
+            else:
+                equal_groups.append((length, [index]))
+        for _, indices in equal_groups:
+            if len(indices) > 1:
+                anchor = indices[0]
+                a, b = group[anchor]
+                expected = points[b] - points[a]
+                equal = min(lengths[i] for i in indices) > 0
+                for index in indices[1:]:
+                    u, v = group[index]
+                    sign = 1 if expected @ (points[v] - points[u]) > 0 else -1
+                    equal = equal and np.linalg.norm(vectors[index] - sign * vectors[anchor]) <= REL_TOL * max(lengths[index], lengths[anchor])
+                checks.append(equal)
+
+    marks = observe_marks(target, edges)
+    if marks['unresolved']:
+        raise ValueError('Reference equality marks are not uniquely bound to painted named segments')
+    if not all(mark_truth(marks, points)):
+        raise ValueError('Reference relation marks contradict its measured geometry')
+    checks.extend(mark_truth(marks, produced))
+
+    circles = target.get('circles', []) + target.get('arcs', [])
+    drawn = output.get('circles', []) + output.get('arcs', [])
+    matches = []
+    if circles:
+        # shortcut: exact assignment is bounded to 12 objects; use a polynomial solver for larger scenes.
+        if len(circles) > 12:
+            raise ValueError('Reference exceeds the 12-circular-path matching limit')
+        if len(circles) > 1 and extent == 0:
+            raise ValueError('Multiple reference circular paths require two distinct named points')
+        for circle in circles:
+            _circular_error(circle, circle, points, points, edges)
+        if len(drawn) > 12:
+            matches = [None] * len(circles)
+            checks += [False] * len(circles)
+        else:
+            errors = [[_circular_error(circle, item, points, produced, edges) for item in drawn] for circle in circles]
+            matches = [j if j < len(drawn) else None for j in _assign_circles(errors, circles, drawn)[-1]]
+            checks += [j is not None and errors[i][j] <= REL_TOL for i, j in enumerate(matches)]
+    if not checks and points:
+        expected = np.array(list(points.values()))
+        actual = np.array(list(produced.values()))
+        complete = len(actual) == len(expected)
+        checks = [complete and np.linalg.matrix_rank(actual - actual[0], tol=actual_extent * 1e-8) >=
+                  np.linalg.matrix_rank(expected - expected[0], tol=extent * 1e-8)]
+    drawn_marks = observe_marks(output, connections(output) if output.get('strokes') else [])
+    checks += [False for valid in mark_truth(drawn_marks, output['points']) if not valid]
+    checks += [False] * len(drawn_marks['unresolved'])
     return [bool(check) for check in checks], matches

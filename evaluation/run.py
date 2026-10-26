@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from evaluation.evaluator import _observe_pair, _score_observations, evaluate
+from evaluation.evaluator import EvaluationError, EvaluationInfrastructureError, _observe_pair, _score_observations, evaluate
 from evaluation.tikz_preview import write_preview
 
 
@@ -18,13 +18,22 @@ def main() -> None:
     if args.preview and args.preview.resolve() in {args.target.resolve(), args.output.resolve()}:
         parser.error('--preview must not overwrite either TikZ input')
     target_tikz, output_tikz = args.target.read_text(encoding='utf-8'), args.output.read_text(encoding='utf-8')
+    error = None
     if args.preview:
-        with _observe_pair(target_tikz, output_tikz) as (target, output):
-            scores = _score_observations(target, output)
-            write_preview({**target, 'tikz': target_tikz}, {**output, 'tikz': output_tikz}, scores, args.preview)
+        with _observe_pair(target_tikz, output_tikz, preview=True) as (target, output):
+            try:
+                scores = _score_observations(target, output)
+            except (EvaluationError, EvaluationInfrastructureError) as failure:
+                scores, error = failure.scores, str(failure)
+            write_preview({**target, 'tikz': target_tikz}, {**output, 'tikz': output_tikz}, scores, args.preview, error=error)
     else:
-        scores = evaluate(target_tikz, output_tikz)
-    print(json.dumps(scores, allow_nan=False))
+        try:
+            scores = evaluate(target_tikz, output_tikz)
+        except (EvaluationError, EvaluationInfrastructureError) as failure:
+            scores, error = failure.scores, str(failure)
+    print(json.dumps(scores if error is None else {'scores': scores, 'error': error}, allow_nan=False))
+    if error is not None:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

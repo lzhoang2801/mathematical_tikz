@@ -95,8 +95,10 @@ def write_review(output: Path, rows: list[dict], latest: dict[str, dict]) -> Non
     for row in rows:
         before = ""
         if row["task"] == "Edit":
-            base = latest.get(row["provenance"].get("starting_record_id"))
-            if base and base.get("rendered_png_path"):
+            current = row.get('current_render')
+            base = ({**current, 'target_tikz': row['current_tikz']} if current else
+                    latest.get(row['provenance'].get('starting_record_id')))
+            if base and drawing.target_image(base):
                 before = f'<figure><figcaption>Before</figcaption><img src="{html.escape(Path(base["rendered_png_path"]).as_uri())}"></figure>'
         image = html.escape(Path(row["rendered_png_path"]).as_uri())
         cards.append(f'<article><h2>{html.escape(row["task"])} · {html.escape(row["id"])}</h2>'
@@ -129,6 +131,7 @@ def snapshot(output: Path, state: dict, latest: dict[str, dict]) -> dict:
               "source_coverage": source_coverage({"Generate": generated, "Edit": edits}, state.get("source_hashes", {})),
               "author_calls_reserved": state["author_calls"], "drawing_attempts_reserved": sum(state["drawing_attempts"].values()),
               "failed_or_held_drawings": len(failures), "excluded_candidates": len(excluded),
+              "instruction_review_pending": state.get("instruction_review_pending", 0),
               "status": state.get("status", "running"),
               "model": state.get("model"), "langsmith_project": state.get("project"),
               "elapsed_seconds": state.get("elapsed_seconds", 0),
@@ -175,6 +178,7 @@ def make_context(sources: dict[str, dict], latest: dict[str, dict], history: lis
                "rows_requested": requested, "tasks": [task], "requested_counts": {task: requested},
                "sources": [sources[key] for key in chosen],
                "available_starts": [{"id": row["id"], "instruction": row["instruction"],
+                                   "current_tikz": row["target_tikz"],
                                    "source_group": row["source_group"], "parents": row["provenance"]["parents"],
                                    "grade": row.get("grade"), "diagram_types": row.get("diagram_types")}
                                   for row in selected_bases.values()],
@@ -185,14 +189,33 @@ def make_context(sources: dict[str, dict], latest: dict[str, dict], history: lis
     return context, selected_bases
 
 
+def hydrate_edit_starts(context: dict, bases: dict[str, dict]) -> dict:
+    """Upgrade saved pre-current_tikz Edit plans from their exact checked base snapshots."""
+    if "Edit" not in context.get("tasks", []):
+        return context
+    hydrated = {**context, "available_starts": []}
+    for start in context.get("available_starts", []):
+        base = bases.get(start.get("id"))
+        tikz = base.get("target_tikz") if base else None
+        if (not base or base.get("task") != "Generate"
+                or not isinstance(tikz, str) or not tikz.strip()
+                or start.get("instruction") != base.get("instruction")
+                or start.get("source_group") != base.get("source_group")
+                or start.get("parents") != base.get("provenance", {}).get("parents")
+                or ("current_tikz" in start and start["current_tikz"] != tikz)):
+            raise ValueError("Saved Edit start does not match its checked Generate base")
+        hydrated["available_starts"].append({**start, "current_tikz": tikz})
+    return hydrated
+
+
 def run(args, *, model, agent, compiler, trace_client) -> dict:
     output = args.output.resolve()
     sources, _, _ = author.load_pool(args.sources)
     if not sources:
         raise ValueError("No selected source is available")
-    harness = {name: hashlib.sha256((drawing.MATHPAPER / "src/agent" / name).read_bytes()).hexdigest()
+    harness = {name: hashlib.sha256((ROOT / "src/agent" / name).read_bytes()).hexdigest()
                for name in ("prompts/tikz.py", "prompts/problem_tikz.py", "latex/tikz.py",
-                            "workflows/tikz.py", "workflows/problem_tikz.py", "schemas/tikz.py")}
+                            "workflows/tikz.py", "workflows/problem_tikz.py", "schemas/tikz.py", "middleware.py")}
     fingerprint = {"sources": hashlib.sha256(drawing.encoded(sources).encode()).hexdigest(),
                    "prompt": hashlib.sha256((ROOT / "tools/instruction_prompt.md").read_bytes()).hexdigest(),
                    "harness": harness, "model": getattr(model, "model_name", None),
@@ -291,13 +314,15 @@ def run(args, *, model, agent, compiler, trace_client) -> dict:
                 drawing.save_json(state_path, state)
                 saved_sources = authored / "sources.json"
                 call_sources = json.loads(saved_sources.read_text(encoding="utf-8")) if saved_sources.is_file() else sources
-                author.generate([saved["context"]], authored, model=model, sources=call_sources, workers=1,
+                context = hydrate_edit_starts(saved["context"], saved["bases"])
+                author.generate([context], authored, model=model, sources=call_sources, workers=1,
                                 resume=authored.exists(), project=state["project"], trace_client=trace_client,
                                 bases=saved["bases"])
             author_report = json.loads((authored / "report.json").read_text(encoding="utf-8"))
             if author_report["calls_failed"] and not author_report["calls_completed"]:
                 state["status"] = "author_failed"
                 break  # Resume retries this saved context after the provider/output issue is fixed.
+            state["instruction_review_pending"] = author_report.get("instruction_review_pending", 0)
             proposed = [row for name in ("generate-inputs.jsonl", "edit-inputs.jsonl")
                         for row in author.jsonl(authored / name)]
             known = {author.case_key(row) for row in latest.values()}
@@ -316,6 +341,9 @@ def run(args, *, model, agent, compiler, trace_client) -> dict:
                 if state["drawing_attempts"].get(row["id"], 0) < 2:
                     pending.append(row)
             draw(pending)
+            if state["instruction_review_pending"]:
+                state["status"] = "instruction_review_required"
+                break  # Keep the paid author response and plan until every proposal has a decision.
             if not any(row["id"] not in latest for row in pending):
                 state["pending"] = None
             drawing.save_json(state_path, state)

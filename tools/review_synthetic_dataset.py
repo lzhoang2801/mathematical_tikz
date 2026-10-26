@@ -36,6 +36,11 @@ class Review:
         self.reconstructed = {}
         self.moves = []
         digest = hashlib.sha256()
+        registry_path = self.output / 'sources.json'
+        registry_exists = registry_path.is_file()
+        registry_data = registry_path.read_bytes() if registry_exists else b'{}'
+        self.sources = json.loads(registry_data)
+        digest.update(registry_data)
         for name in ('generate.jsonl', 'edit.jsonl', 'excluded.jsonl',
                      'reconstruct/candidates.jsonl', 'reconstruct/moves.jsonl'):
             path = self.output / name
@@ -57,6 +62,46 @@ class Review:
             self.excluded[move['original']['id']] = move['original']
             self.reconstructed[move['reconstruct']['id']] = move['reconstruct']
         self.rows = {key: row for key, row in self.rows.items() if key not in self.excluded}
+        if not registry_exists:
+            source_ids = set()
+            for row in self.rows.values():
+                provenance = row.get('provenance', {})
+                for field in ('parent_sources', 'parent_hashes'):
+                    references = provenance.get(field)
+                    if isinstance(references, dict):
+                        source_ids.update(references)
+            if source_ids:
+                selected, _, _ = author.load_pool()
+                self.sources = {key: selected[key] for key in sorted(source_ids) if key in selected}
+                digest.update(drawing.encoded(self.sources).encode('utf-8'))
+        for row in self.rows.values():
+            provenance = row.get('provenance', {})
+            references = provenance.get('parent_sources', {})
+            file_hashes = provenance.get('parent_hashes', {})
+            if references or file_hashes:
+                parents = provenance.get('parents', [])
+                if not isinstance(parents, list) or not isinstance(references, dict) or not isinstance(file_hashes, dict):
+                    raise ValueError(f"{row['id']}: invalid audited source provenance")
+                for parent in parents:
+                    source = self.sources.get(parent)
+                    reference = references.get(parent)
+                    if not isinstance(source, dict) or not isinstance(reference, dict):
+                        raise ValueError(f"{row['id']}: audited source missing from registry or current selection: {parent}")
+                    actual_text = source.get('source_text')
+                    actual_text_hash = (hashlib.sha256(actual_text.encode('utf-8')).hexdigest()
+                                        if isinstance(actual_text, str) else None)
+                    expected_file_hash = file_hashes.get(parent) or reference.get('source_sha256')
+                    if (not isinstance(actual_text, str) or not actual_text.strip()
+                            or source.get('source_sha256') != expected_file_hash
+                            or source.get('source_text_sha256') != reference.get('source_text_sha256')
+                            or actual_text_hash != reference.get('source_text_sha256')
+                            or source.get('source_path') != reference.get('source_path')
+                            or source.get('locator') != reference.get('locator')):
+                        raise ValueError(f"{row['id']}: audited source changed; regenerate and review the pair")
+            for parent, expected in provenance.get('parent_sha256', {}).items():
+                actual = hashlib.sha256(drawing.encoded(self.sources.get(parent)).encode()).hexdigest()
+                if actual != expected:
+                    raise ValueError(f"{row['id']}: source registry changed; regenerate and review the pair")
         self.revision = digest.hexdigest()
 
     def save(self):
@@ -136,9 +181,9 @@ class Review:
             provenance['source_groups'] = sorted(set(provenance.get('source_groups', [])) | ({row['source_group']} if row.get('source_group') else set()))
             splits = [split for split in (row.get('split'), previous.get('split')) if split is not None]
             target = {**{field: row.get(field) for field in
-                ('schema_version', 'source', 'source_group', 'grade', 'diagram_types')},
+                ('schema_version', 'source', 'source_group')},
                 'id': key, 'task': 'Reconstruct', 'current_tikz': None,
-                'instruction': 'Reconstruct the supplied diagram as TikZ, preserving its geometry, labels and markings.',
+                'instruction': None,
                 'target_tikz': row['target_tikz'], 'image': {'path': str(path), 'sha256': image_hash},
                 'split': max(splits, key=('train', 'validation', 'test').index) if splits else None,
                 'provenance': provenance, 'rendered_png_path': str(path),
@@ -159,6 +204,8 @@ class Review:
 
     def preview(self, row: dict, before: bool):
         if before:
+            if isinstance(row.get('current_render'), dict):
+                return drawing.target_image({**row['current_render'], 'target_tikz': row.get('current_tikz')})
             base = self.bases.get(row.get('provenance', {}).get('starting_record_id'))
             if not base or base.get('target_tikz') != row.get('current_tikz'):
                 return None
@@ -215,6 +262,8 @@ function render(){
   details.ontoggle=async()=>{if(!details.open||details.dataset.loaded)return;details.dataset.loaded='1';try{const full=await request('/api/row?id='+encodeURIComponent(r.id));
    if(full.current_tikz){text('h3','Current TikZ',details);text('pre',full.current_tikz,details)}text('h3','Target TikZ',details);text('pre',full.target_tikz,details);
    text('h3','Source metadata',details);text('pre',JSON.stringify(full.provenance,null,2),details);
+   for(const source of full.sources || []){text('h3',source.source || source.id,details);text('pre',source.source_text,details);
+    if(source.givens)text('p','Audited givens: '+source.givens,details)}
   }catch(e){details.dataset.loaded='';text('p',e.message,details)}};
  }
  selection();
@@ -265,7 +314,8 @@ def make_server(review: Review, port: int = 8765):
                         'reconstruct': len(review.reconstructed), 'moved': len(review.moves)})
                 row = review.rows.get(query.get('id', [''])[0])
                 if url.path == '/api/row' and row:
-                    return self.reply(200, row)
+                    return self.reply(200, {**row, 'sources': [review.sources[parent]
+                        for parent in row.get('provenance', {}).get('parents', []) if parent in review.sources]})
                 if url.path == '/image' and row:
                     image = review.preview(row, query.get('before', ['0'])[0] == '1')
                     if image:

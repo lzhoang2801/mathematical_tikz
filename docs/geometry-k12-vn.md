@@ -1,47 +1,78 @@
-### Bảng phân loại hệ thống hình vẽ hình học (Toán K-12)
+# Mathematical diagrams in geometry
 
-| Category | Subcategory | Diagram type | Required primitives | Geometric relations/constraints | Grade | Source | Example description |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Hình học phẳng (Plane Geometry)** | Các yếu tố cơ bản (Basic Elements) | Điểm, đường thẳng, đoạn thẳng và đường cong | Point, line, segment, curve, ruler. | Thẳng hàng (collinearity), nằm giữa, trung điểm (midpoint), cắt nhau (intersection), đo độ dài. | Lớp 2, Lớp 3, Lớp 6 | `grade_2_sgk1.pdf`, `grade_2_sgv.pdf`, `grade_3_sgk_1.pdf`, `grade_6_sgk_1.pdf`, `grade_6_sgv.pdf` | Vẽ ba điểm \\(A, B, C\\) thẳng hàng trên thước chia độ; đoạn thẳng \\(AB\\) có trung điểm \\(M\\) sao cho \\(AM = MB\\); hoặc đường cong nét mảnh đi qua các điểm. |
-| **Hình học phẳng (Plane Geometry)** | Các yếu tố cơ bản (Basic Elements) | Tia và Góc (Rays and Angles) | Point, ray, angle, arc, protractor (thước đo góc). | Chung gốc (origin of ray), đối nhau (opposite rays), phân loại góc (nhọn, vuông, tù, bẹt, phản xạ), số đo góc, tia phân giác. | Lớp 6, Lớp 7, Lớp 8 | `grade_6_sgk_1.pdf`, `grade_6_sgv.pdf` | Hình vẽ tia \\(Ox, Oy\\) đối nhau tạo thành góc bẹt \\(xOy\\); góc \\(xOy\\) có số đo \\(75^\circ\\) đi kèm thước đo độ hoặc tia phân giác \\(Oz\\). |
-| **Hình học phẳng (Plane Geometry)** | Tam giác (Triangles) | Tam giác cơ bản và các đường trong tam giác | Point, segment, triangle, altitude (đường cao), median (trung tuyến), angle bisector, perpendicular bisector (trung trực). | Vuông góc (perpendicularity), chia đôi đoạn thẳng (midpoint), phân đôi góc (bisection), giao điểm của các đường. | Lớp 3, Lớp 7, Lớp 8 | `grade_3_sgk_1.pdf`, `grade_7_sgk_1.pdf`, `grade_7_sgv.pdf` | Tam giác \\(ABC\\) có đường trung trực \\(d\\) của đoạn \\(AB\\) đi qua trung điểm \\(O\\) và vuông góc tại đó; hoặc tam giác \\(ABC\\) có đường cao \\(AH\\) vuông góc với cạnh \\(BC\\). |
-| **Hình học phẳng (Plane Geometry)** | Tam giác (Triangles) | Tam giác bằng nhau (Congruent Triangles) | Point, segment, angle, triangle, equal-length ticks (ký hiệu gạch bằng nhau), equal-angle arcs. | Hệ thức bằng nhau: c-c-c (side-side-side), c-g-c, g-c-g; các trường hợp bằng nhau của tam giác vuông (cạnh huyền-góc nhọn, cạnh huyền-cạnh góc vuông). | Lớp 7 | `grade_7_sgk_1.pdf`, `grade_7_sgv.pdf` | Hai tam giác vuông \\(ABC\\) và \\(A'B'C'\\) có ký hiệu vuông góc tại \\(A, A'\\), ký hiệu gạch chéo một vạch ở cạnh huyền (\\(BC=B'C'\\)) và vòng cung nhỏ ở góc nhọn tương ứng (\\(\widehat{B}=\widehat{B'}\\)). |
-| **Hình học phẳng (Plane Geometry)** | Tam giác (Triangles) | Tam giác đồng dạng và Định lý Thales | Point, line, segment, triangle, parallel lines. | Song song (parallelism: \\(MN \parallel BC\\)), tỉ lệ các đoạn thẳng (\\(AM/AB = AN/AC\\)), tỉ số đồng dạng \\(k\\), góc bằng nhau. | Lớp 8 | `grade_8_sgk_2.pdf`, `grade_8_sgv.pdf` | Tam giác \\(ABC\\) có đường thẳng d cắt \\(AB, AC\\) tại \\(M, N\\) sao cho \\(MN \parallel BC\\); hoặc sơ đồ đồng dạng hình cát/đồng hồ cát qua đỉnh chung. |
-| **Hình học phẳng (Plane Geometry)** | Tam giác (Triangles) | Hệ thức lượng trong tam giác vuông & Ứng dụng | Point, segment, angle, right triangle, angle of inclination, ground line, object representation (cây, xe tải, nhà). | Vuông góc, định lý Pythagore, tỉ số lượng giác (sin, cos, tan), góc nghiêng \\(\alpha\\), độ dài hình chiếu. | Lớp 9, Lớp 10 | `grade_8_sgk_2.pdf`, `grade_9_sgk_1.pdf` | Hình vẽ một xe tải tự đổ với thùng xe nghiêng góc \\(\alpha\\) so với phương ngang, hoặc đo chiều cao của cây bằng góc bóng nắng vuông góc với mặt đất. |
-| **Hình học phẳng (Plane Geometry)** | Tứ giác và Đa giác (Quadrilaterals & Polygons) | Tứ giác đặc biệt (Special Quadrilaterals) | Point, segment, polygon, right-angle mark, equal-length ticks, parallel lines, diagonal intersection. | Cạnh đối song song, cạnh bằng nhau, góc vuông ở các đỉnh, hai đường chéo cắt nhau tại trung điểm hoặc vuông góc nhau. (Gồm: hình chữ nhật, hình vuông, hình bình hành, hình thoi, hình thang, hình thang cân). | Lớp 2, Lớp 3, Lớp 4, Lớp 6, Lớp 8 | `grade_2_sgk1.pdf`, `grade_3_sgk_1.pdf`, `grade_4_sgk_1.pdf`, `grade_6_sgk_1.pdf`, `grade_8_sgk_1.pdf`, `grade_8_sgv.pdf` | Hình thoi \\(MNPQ\\) có hai đường chéo \\(MP, NQ\\) vuông góc tại giao điểm \\(O\\) và các cạnh bên được đánh dấu gạch chéo bằng nhau; hình thang cân có hai cạnh bên bằng nhau và hai đáy song song. |
-| **Hình học phẳng (Plane Geometry)** | Tứ giác và Đa giác (Quadrilaterals & Polygons) | Đa giác đều (Regular Polygons) | Point, segment, polygon, symmetry line, circle. | Tất cả các cạnh bằng nhau, các góc bằng nhau, tâm đối xứng (central symmetry), trục đối xứng (lines of symmetry). | Lớp 6, Lớp 9 | `grade_6_sgk_1.pdf` | Hình lục giác đều \\(ABCDEF\\) có tâm đối xứng \\(O\\) và biểu diễn các trục đối xứng đi qua đỉnh hoặc trung điểm cạnh đối diện, gồm 6 tam giác đều ghép lại. |
-| **Hình học phẳng (Plane Geometry)** | Đường tròn (Circle Geometry) | Các yếu tố cơ bản của đường tròn và Cách dựng hình | Point, circle, segment, compass, ruler. | Tâm (\\(O\\)), bán kính (\\(R\\)), đường kính (\\(d\\)), dây cung (chord), cung tròn (arc), vị trí tương đối của điểm và đường tròn (trong/trên/ngoài). | Lớp 3, Lớp 5, Lớp 9 | `grade_3_sgk_1.pdf`, `grade_5_sgk_1.pdf`, `grade_9_sgk_2.pdf`, `grade_9_sgv.pdf` | Đường tròn tâm \\(O\\) bán kính \\(OP\\) và đường kính \\(MN\\) đi qua \\(O\\); hoặc hình vành khuyên và hình quạt tròn giữa hai bán kính. |
-| **Hình học phẳng (Plane Geometry)** | Đường tròn (Circle Geometry) | Góc trong đường tròn và Tứ giác nội tiếp | Point, segment, circle, arc, angle, cyclic quadrilateral. | Góc ở tâm, góc nội tiếp, cung bị chắn, các đỉnh tứ giác nằm trên chu vi đường tròn, tổng hai góc đối bằng \\(180^\circ\\). | Lớp 9 | `grade_9_sgk_2.pdf`, `grade_9_sgv.pdf` | Đường tròn tâm \\(O\\) có tứ giác nội tiếp \\(ABCD\\), vẽ góc nội tiếp \\(\widehat{A}\\) chắn cung \\(BCD\\); hoặc góc ở tâm \\(\widehat{AOB}\\) chắn cung nhỏ \\(AB\\). |
-| **Hình học phẳng (Plane Geometry)** | Đường tròn (Circle Geometry) | Tiếp tuyến và vị trí tương đối của đường thẳng và đường tròn | Point, line, segment, circle, right-angle mark, perpendicular. | Tiếp xúc (tangency - 1 điểm chung), vuông góc tại tiếp điểm (\\(OH \perp a\\)), cắt nhau (2 điểm chung), không giao nhau (0 điểm chung); so sánh khoảng cách từ tâm \\(d\\) với bán kính \\(R\\). | Lớp 9 | `grade_9_sgk_1.pdf`, `grade_9_sgv.pdf` | Đường thẳng \\(a\\) tiếp xúc đường tròn \\((O)\\) tại điểm \\(H\\), vẽ bán kính \\(OH\\) vuông góc với \\(a\\) tại tiếp điểm; minh họa 3 trường hợp vị trí tương đối kế bên nhau. |
-| **Hình học tọa độ và Vectơ (Analytic & Vector Geometry)** | Vectơ trong mặt phẳng (Vectors in Plane) | Biểu diễn Vectơ và các phép toán | Point, directed segment (arrow/vector), coordinate grid. | Điểm đầu, điểm cuối, hướng mũi tên, độ dài (độ lớn), cộng/trừ vectơ theo quy tắc tam giác hoặc quy tắc hình bình hành. | Lớp 10 | `grade_10_sgk_2.pdf`, `grade_10_sgv.pdf` | Hình vẽ biểu diễn vectơ \\(\vec{u}\\) và vectơ \\(\vec{v}\\) cùng xuất phát từ một điểm hoặc quy tắc hình bình hành cộng vectơ: \\(\vec{AB} + \vec{AD} = \vec{AC}\\). |
-| **Hình học tọa độ và Vectơ (Analytic & Vector Geometry)** | Hình học tọa độ Oxy (Plane Coordinate Geometry) | Đường thẳng, Đường tròn và Conic trên mặt phẳng Oxy | Coordinate axes (\\(Ox, Oy\\)), grid lines, point, line, circle, ellipse, reference rectangle, foci (tiêu điểm), directrix. | Trục \\(Ox \perp Oy\\), tọa độ \\((x, y)\\), vectơ pháp tuyến/chỉ phương, phương trình chính tắc elip \\(x^2/a^2 + y^2/b^2 = 1\\), tiêu cự \\(2c\\), tiêu điểm nằm trên \\(Ox\\). | Lớp 10 | `grade_10_sgk_cd.pdf`, `grade_10_sgv.pdf`, `grade_10_sgv_cd.pdf` | Trục tọa độ \\(Oxy\\) vẽ hình Elip \\((E)\\) có tiêu điểm \\(F_1(-c;0), F_2(c;0)\\) và được giới hạn ngoài bởi hình chữ nhật cơ sở kích thước \\(2a \times 2b\\). |
-| **Phép biến hình (Transformations)** | Phép biến hình phẳng (Plane Transformations) | Phép dời hình và Phép đồng dạng phối cảnh | Point, segment, polygon, vector, center point, construction lines. | Tịnh tiến theo vectơ \\(\vec{u}\\) (translation), đối xứng qua tâm/trục (reflection), vị tự tâm \\(O\\) tỉ số \\(k\\) (homothety), bảo toàn số đo góc và hình dạng. | Lớp 9, Lớp 11 | `grade_9_sgk_1.pdf`, `grade_11_sgv.pdf`, `grade_11_sgv_cd.pdf` | Hình vẽ phép vị tự tâm \\(O\\) biến tam giác \\(ABC\\) thành tam giác \\(A'B'C'\\) đồng dạng phối cảnh tỉ số \\(k=2\\), có các đường thẳng nối đỉnh đồng hướng hội tụ tại \\(O\\). |
-| **Hình học không gian (Spatial & 3D Geometry)** | Các khối hình học cơ bản (Basic 3D Solids) | Khối đa diện trực quan và khối tròn xoay | 3D wireframe/shaded solid, cylinder, cone, sphere, cuboid, cube, pyramid. | Mặt đáy tròn/đa giác, đường cao vuông góc với đáy, mặt cầu bao quanh, các mặt bên phẳng, bóng đổ trực quan. | Lớp 2, Lớp 3, Lớp 5, Lớp 9 | `grade_2_sgk1.pdf`, `grade_3_sgk_2.pdf` | Hình vẽ phối cảnh khối trụ, khối nón, khối cầu, khối lập phương và hộp chữ nhật có vẽ bóng mờ 3D hoặc khung dây. |
-| **Hình học không gian (Spatial & 3D Geometry)** | Hình học không gian cổ điển (Descriptive Spatial Geometry) | Quan hệ song song, vuông góc, góc & khoảng cách trong không gian | Point, solid segment (nét liền), dashed segment (nét đứt), plane (represented by parallelogram), perpendicular mark. | Nét khuất là nét đứt (dashed), đường nhìn thấy là nét liền (solid); đồng phẳng, song song, vuông góc giữa đường thẳng với đường thẳng, đường thẳng với mặt phẳng, hai mặt phẳng; hình chiếu vuông góc, thiết diện (cross-section). | Lớp 11 | `grade_11_sgk_2.pdf`, `grade_11_sgv.pdf` | Hình chóp \\(S.ABCD\\) có đáy là hình bình hành, trong đó các đường khuất phía sau (\\(AD, CD, SO\\)) được vẽ bằng nét đứt, đường SO vuông góc với mặt đáy \\((ABCD)\\). |
-| **Hình học không gian (Spatial & 3D Geometry)** | Hệ tọa độ Oxyz trong không gian (3D Coordinate Geometry) | Hệ trục Oxyz và các đối tượng (mặt phẳng, đường thẳng, mặt cầu) | Three mutually perpendicular coordinate axes (\\(Ox, Oy, Oz\\)), unit vectors (\\(\vec{i}, \vec{j}, \vec{k}\\)), points, plane parallelograms, circles with dashed sections. | Hệ trục tọa độ vuông góc từng đôi một, tọa độ \\((x, y, z)\\), hình chiếu vuông góc của một điểm \\(M\\) lên ba mặt tọa độ (\\(Oxy, Oyz, Ozx\\)) bằng các nét đứt tạo thành hình hộp. | Lớp 12 | `grade_12_sgv.pdf` | Hình vẽ hệ trục \\(Oxyz\\) vuông góc trong không gian, biểu diễn điểm \\(M(x;y;z)\\) và các nét chiếu đứt vuông góc xuống mặt phẳng tọa độ \\(Oxy, Oyz\\), dựng thành một khung hộp chữ nhật lấy gốc \\(O\\) làm đỉnh. |
+A mathematical geometry diagram represents geometric objects and the relationships that define a configuration. Points, lines, circles, polygons, planes and solids are connected by incidence, order, parallelism, perpendicularity, tangency, metric relations and constructions. Labels, line styles and relation marks make that configuration readable.
 
----
+This project works with geometry in grades 6–12. Its diagrams cover plane geometry, vectors and coordinate geometry, transformations, and spatial geometry. The [task contract](<K-12 Mathematical Diagrams with TikZ.md#task-inputs>) defines the inputs and outputs for Generate, Edit and Reconstruct.
 
-### Thống kê tổng hợp các loại hình học / diagram đặc thù
+## Geometry taxonomy
 
-Thống kê các nhóm được liệt kê trong bảng hình học trên:
+This taxonomy summarizes the geometric configurations considered during initial source preparation. Its codes serve as reference labels within this overview of the input corpus.
 
-*   **Tổng số Category duy nhất:** **4**
-    1.  *Hình học phẳng (Plane Geometry)*
-    2.  *Hình học tọa độ và Vectơ (Analytic & Vector Geometry)*
-    3.  *Phép biến hình (Transformations)*
-    4.  *Hình học không gian (Spatial & 3D Geometry)*
-*   **Tổng số Subcategory duy nhất:** **10**
-    1.  *Các yếu tố cơ bản (Basic Elements)*
-    2.  *Tam giác (Triangles)*
-    3.  *Tứ giác và Đa giác (Quadrilaterals & Polygons)*
-    4.  *Đường tròn (Circle Geometry)*
-    5.  *Vectơ trong mặt phẳng (Vectors in Plane)*
-    6.  *Hình học tọa độ Oxy (Plane Coordinate Geometry)*
-    7.  *Phép biến hình phẳng (Plane Transformations)*
-    8.  *Các khối hình học cơ bản (Basic 3D Solids)*
-    9.  *Hình học không gian cổ điển (Descriptive Spatial Geometry)*
-    10. *Hệ tọa độ Oxyz trong không gian (3D Coordinate Geometry)*
-*   **Tổng số Diagram Type duy nhất:** **17** (như được phân tách chi tiết trong từng hàng của bảng trên).
+| Code | Geometry family | Objects and relationships |
+| --- | --- | --- |
+| G01 | Points, lines, segments and curves | Named points, collinearity, intersections, order and midpoint relations. |
+| G02 | Rays and angles | Ray origins and directions, angle sectors, bisectors and angle measures. |
+| G03 | Triangles and associated constructions | Altitudes, medians, bisectors, perpendicular bisectors and their intersections. |
+| G04 | Congruent triangles | Vertex correspondence, equal segments, equal angles and right-triangle configurations. |
+| G05 | Similar triangles and Thales configurations | Parallel transversals, corresponding vertices, segment ratios and homothety relations. |
+| G06 | Metric relations in right triangles | Altitude projections, Pythagorean relations, trigonometric ratios and geometric lengths. |
+| G07 | Quadrilaterals | Side and diagonal relations in squares, rectangles, parallelograms, rhombi and trapezoids. |
+| G08 | Regular polygons | Equal sides and angles, centers, symmetry axes and associated circles. |
+| G09 | Circles and circle constructions | Centers, radii, diameters, chords, arcs and point positions relative to a circle. |
+| G10 | Circle angles and cyclic quadrilaterals | Central and inscribed angles, intercepted arcs and concyclic vertices. |
+| G11 | Tangency and line–circle configurations | Contact points, tangent radii, secants and specified intersection branches. |
+| G12 | Vectors | Directed segments, equal vectors, vector sums and triangle/parallelogram constructions. |
+| G13 | Plane coordinate geometry | Coordinate axes, points, lines, circles and conics with their geometric defining objects. |
+| G14 | Plane transformations | Translation, reflection, rotation and homothety with corresponding objects. |
+| G15 | Polyhedra and solids of revolution | Prisms, pyramids, cylinders, cones, spheres, bases, axes and sections. |
+| G16 | Spatial geometry | Points, lines, planes, sections, projections and spatial incidence, angle and distance relations. |
+| G17 | Spatial coordinate geometry | Oxyz axes, vectors, points, lines, planes, spheres and coordinate projections. |
 
-*Nguồn trong bảng là các sách thuộc corpus đã xử lý. Xem danh mục mở rộng để bao quát các diagram ngoài hình học.*
+Spatial diagrams use solid and dashed strokes to show visibility in the chosen projection. Construction constraints belong to the spatial configuration; the projected drawing must represent those objects consistently.
+
+## Mathematical content
+
+Preparing a diagram requires three decisions:
+
+| Component | Purpose |
+| --- | --- |
+| Source facts | Establish the premises, named objects, construction definitions and branch conditions. |
+| Construction constraints | Determine where dependent objects lie and which geometric relationships must hold. |
+| Visible information | Communicate the requested configuration through geometry, labels, strokes, marks and measurements. |
+
+A relation may be communicated by the configuration itself. A mark records a relation visibly; its placement must agree with the geometry. For example, an altitude foot must lie on its defining carrier and produce perpendicular lines, while an angle mark must identify the intended angle.
+
+Generate uses a complete configuration and its requested constructions. Edit uses the actual starting diagram and a defined change, retaining unaffected objects and relationships. Reconstruct reproduces the geometry visible in its input image. Task inputs and message roles follow the [canonical contract](<K-12 Mathematical Diagrams with TikZ.md#task-inputs>).
+
+## Givens and auxiliary constructions
+
+Separate original givens, definitions of new objects and conclusions to be proved. Dependent points are constructed from their parents and defining carriers. Record segment, ray or supporting-line distinctions and the branch of an intersection.
+
+Useful auxiliary geometry exposes a relationship in the configuration: an altitude, a median, a parallel through a point, a reflection, a tangent radius, a section or a projection. Its role comes from a later problem part, a checked solution construction or a deliberate synthetic addition.
+
+Instruction variety comes from different compatible configurations and purposeful constructions. Related Generate/Edit targets may share a diagram and original source problem while retaining their own task inputs.
+
+## Source preparation
+
+The processed curriculum corpus is located at `C:/Users/Onn/Documents/Git/curriculum_grounding/curriculums`.
+
+| Grades | Source artifacts |
+| --- | --- |
+| 6–9 | `book.final.md`, `layout.final.json`, `toc.final.json` and adjacent `images/`. |
+| 10–12 | `full.md`, `layout.json` and adjacent `images/`. |
+
+A source unit is a complete example, practice problem or exercise, including subparts that define constructions. The source ledger stores its original text and a file/line/page locator. Each dataset candidate keeps only a source reference so that its original problem can be recovered and related samples can share one split. Figure-dependent facts require the cited diagram.
+
+The current authoring pool is [selection.jsonl](../dataset/audit_givens/selection.jsonl). Source manifests under [dataset-selection/](dataset-selection/) preserve corpus records and their audit decisions. The source inventory is [dataset-selection.json](dataset-selection.json); [prepare_dataset_selection.py](../tools/prepare_dataset_selection.py) checks its source locations.
+
+Dataset production, review, checkpoint recovery and export follow [dataset conventions](../dataset/CONVENTIONS.md). Related source problems and diagram variants keep a shared split assignment.
+
+## Review and evaluation
+
+Review the input and target as a pair: source/configuration fidelity, defining geometric relations, required visible content and readable layout. A reviewed pair preserves the exact target code and its verified render.
+
+The four evaluation dimensions are compilation, mathematical correctness, content coverage and visual readability. Executable checks measure supported observed geometry; independent source review establishes alignment with the task input. The implemented scoring boundary and supported observations are documented in [evaluation.md](evaluation.md).
+
+Information-selection studies can compare accepted representations by removing a label, mark or auxiliary while retaining the geometric configuration. Record which relationship becomes ambiguous or unavailable to the reader, and distinguish these changes from changes that make the geometry false.
+
+Source refresh commands and corpus-preservation rules are recorded in [AGENTS.md](../AGENTS.md).

@@ -30,6 +30,21 @@ def preview(directory, color="white"):
     return str(path)
 
 
+
+def reviewed_digest(item):
+    # These are software fixtures, not mathematical acceptance evidence.
+    item["review_evidence"] = dict.fromkeys(
+        ("source", "instruction", "mathematics", "content", "readability", "edit_change", "edit_preservation"),
+        "Explicit unit-test double; no real sample approval")
+    item["review_evidence"]["unresolved"] = []
+    if item.get("task") == "Edit":
+        item["current_render"] = {
+            "rendered_png_path": item["rendered_png_path"],
+            "rendered_png_sha256": item["rendered_png_sha256"],
+            "rendered_tikz_sha256": hashlib.sha256(item["current_tikz"].encode()).hexdigest(),
+        }
+    return drawing.review_digest(item)
+
 def test_parallel_draw_uses_actual_current_tikz_and_preserves_failures(tmp_path, monkeypatch):
     native = importlib.import_module("agent.workflows.problem_tikz")
     from agent.schemas.tikz import TikzResult
@@ -82,7 +97,8 @@ def test_parallel_draw_uses_actual_current_tikz_and_preserves_failures(tmp_path,
     assert all(Path(item["rendered_png_path"]).is_relative_to(tmp_path / "run")
                for item in outcomes if item["success"])
     report = json.loads((tmp_path / "run/report.json").read_text(encoding="utf-8"))
-    assert report["tikz_prompt_version"] and len(report["harness_files"]) == 8
+    assert report["tikz_prompt_version"] and len(report["harness_files"]) == 9
+    assert all(Path(row["path"]).is_relative_to(drawing.ROOT) for row in report["harness_files"])
     assert json.loads((tmp_path / "run/inputs.jsonl").read_text(encoding="utf-8").splitlines()[0]) == rows[0]
 
 
@@ -162,13 +178,13 @@ def test_export_rejects_original_parent_leakage_across_tasks_and_family_names(tm
                     rendered_png_path=preview(tmp_path / item["id"]),
                     rendered_tikz_sha256=hashlib.sha256(item["target_tikz"].encode()).hexdigest())
         item["rendered_png_sha256"] = hashlib.sha256(Path(item["rendered_png_path"]).read_bytes()).hexdigest()
-        item["verification"] = {"status": "ready", "reviewed_by": "test double",
-                                "reviewed_input_sha256": drawing.review_digest(item)}
+        item["verification"] = {"status": "ready", "method": "independent_source_render_review", "reviewed_by": "test double",
+                                "reviewed_input_sha256": reviewed_digest(item)}
     with pytest.raises(ValueError, match="conflicting lineage splits"):
         drawing.export_rows(records, tmp_path / "leaked-export")
     assert not (tmp_path / "leaked-export").exists()
     records[0]["instruction"] = "Đường tròn đường kính MN; OM và ON."
-    records[0]["verification"]["reviewed_input_sha256"] = drawing.review_digest(records[0])
+    records[0]["verification"]["reviewed_input_sha256"] = reviewed_digest(records[0])
     drawing.export_rows(records[:1], tmp_path / "reviewed-instruction-export")
     with pytest.raises(ValueError, match="nonempty"):
         drawing.validate_instruction("   ")
@@ -183,14 +199,21 @@ def test_reviewed_parquet_roundtrip_and_stale_review_gate(tmp_path):
         item.update(rendered_png_path=preview(tmp_path / item["id"]),
                     rendered_tikz_sha256=hashlib.sha256(item["target_tikz"].encode()).hexdigest())
         item["rendered_png_sha256"] = hashlib.sha256(Path(item["rendered_png_path"]).read_bytes()).hexdigest()
-        item["verification"] = {"status": "ready", "reviewed_by": "unit-test double; no real approval",
-                                "reviewed_input_sha256": drawing.review_digest(item)}
+        item["verification"] = {"status": "ready", "method": "independent_source_render_review", "reviewed_by": "unit-test double; no real approval",
+                                "reviewed_input_sha256": reviewed_digest(item)}
     files = drawing.export_rows(records, tmp_path / "parquet")
     import pyarrow.parquet as pq
     assert len(files) == 2
     exported = pq.read_table(tmp_path / "parquet/generate/train.parquet").to_pylist()[0]
     assert exported["instruction"] == records[0]["instruction"] and exported["target_tikz"] == TIKZ_A
-    assert json.loads(exported["metadata"])["provenance"]["parents"] == ["source-1", "source-2"]
+    assert "grade" not in exported and "diagram_types" not in exported
+    process = json.loads(exported["metadata"])
+    assert process["provenance"]["parents"] == ["source-1", "source-2"]
+    # Historic review-bound values stay in process metadata, as the notebook loader expects.
+    restored = {**process, **{key: value for key, value in exported.items()
+                            if key not in ("metadata", "image", "tikz_image", "evaluation_rubric")},
+                "evaluation_rubric": json.loads(exported["evaluation_rubric"])}
+    assert drawing.review_digest(restored) == records[0]["verification"]["reviewed_input_sha256"]
     assert json.loads(exported["evaluation_rubric"]) == []
     assert exported["tikz_image"]["bytes"] == Path(records[0]["rendered_png_path"]).read_bytes()
     assert not Path(exported["tikz_image"]["path"]).is_absolute()
@@ -250,14 +273,14 @@ def test_image_binding_and_atomic_parquet_failure(tmp_path, monkeypatch):
     assert drawing.target_image(item)
     assert drawing.target_image({**item, "target_tikz": TIKZ_B}) is None
     invalid = {**item, "target_tikz": TIKZ_B, "split": "train", "evaluation_rubric": []}
-    invalid["verification"] = {"status": "ready", "reviewed_by": "test double",
-                               "reviewed_input_sha256": drawing.review_digest(invalid)}
+    invalid["verification"] = {"status": "ready", "method": "independent_source_render_review", "reviewed_by": "test double",
+                               "reviewed_input_sha256": reviewed_digest(invalid)}
     with pytest.raises(ValueError, match="verified PNG"):
         drawing.export_rows([invalid], tmp_path / "invalid-export")
     assert not (tmp_path / "invalid-export").exists()
     reviewed = {**item, "split": "train", "evaluation_rubric": []}
-    reviewed["verification"] = {"status": "ready", "reviewed_by": "test double",
-                                "reviewed_input_sha256": drawing.review_digest(reviewed)}
+    reviewed["verification"] = {"status": "ready", "method": "independent_source_render_review", "reviewed_by": "test double",
+                                "reviewed_input_sha256": reviewed_digest(reviewed)}
     preview(tmp_path / "image", "red")
     assert drawing.target_image(item) is None
     assert drawing.target_image({**item, "rendered_png_path": "missing.png"}) is None
@@ -475,3 +498,121 @@ def test_json_snapshot_replace_retries_and_preserves_old_file(tmp_path, monkeypa
         write()
         assert len(attempts) == 3
         assert json.loads(target.read_text(encoding="utf-8"))["id"] == "new"
+
+
+def test_acceptance_requires_independent_evidence_and_resolved_requirements(tmp_path):
+    item = row("gate", target_tikz=TIKZ_A)
+    item.update(rendered_png_path=preview(tmp_path / "gate"),
+                rendered_tikz_sha256=hashlib.sha256(TIKZ_A.encode()).hexdigest())
+    item["rendered_png_sha256"] = hashlib.sha256(Path(item["rendered_png_path"]).read_bytes()).hexdigest()
+    item["verification"] = {"status": "ready", "method": "independent_source_render_review",
+                            "reviewed_by": "unit-test double", "reviewed_input_sha256": reviewed_digest(item)}
+    drawing.validate_ready_pair(item)
+    item["review_evidence"]["unresolved"] = ["projection carrier"]
+    item["verification"]["reviewed_input_sha256"] = drawing.review_digest(item)
+    with pytest.raises(ValueError, match="unresolved"):
+        drawing.validate_ready_pair(item)
+    item["review_evidence"]["unresolved"] = []
+    item["verification"]["reviewed_input_sha256"] = drawing.review_digest(item)
+    item["review_evidence"]["mathematics"] = "changed approval evidence"
+    with pytest.raises(ValueError, match="changed"):
+        drawing.validate_ready_pair(item)
+    item["verification"]["reviewed_input_sha256"] = drawing.review_digest(item)
+    item["task"] = "Edit"
+    item["current_tikz"] = TIKZ_B
+    item["verification"]["reviewed_input_sha256"] = drawing.review_digest(item)
+    with pytest.raises(ValueError, match="starting PNG"):
+        drawing.validate_ready_pair(item)
+
+def test_draw_batch_coalesces_snapshots_and_keeps_per_row_checkpoints(tmp_path, monkeypatch):
+    native = importlib.import_module("agent.workflows.problem_tikz")
+    from agent.schemas.tikz import TikzResult
+
+    first_snapshot_saved = Event()
+    snapshots = []
+    original_save = drawing.save_candidates
+
+    def fake_draw(*, instruction, current_tikz, artifact_dir, agent, compiler_http):
+        if instruction != "Givens for first":
+            assert first_snapshot_saved.wait(timeout=5)
+        return TikzResult(success=True, status="accepted", usable=True,
+                          tikz=TIKZ_B, rendered_png_path=preview(artifact_dir))
+
+    def save_and_signal(output, latest):
+        snapshots.append(tuple(latest))
+        original_save(output, latest)
+        if not first_snapshot_saved.is_set():
+            first_snapshot_saved.set()
+
+    monkeypatch.setattr(native, "problem_tikz", fake_draw)
+    monkeypatch.setattr(drawing, "save_candidates", save_and_signal)
+    rows = [row("first"), row("second"), row("third")]
+    output = tmp_path / "coalesced"
+    with httpx.Client() as compiler:
+        outcomes = drawing.draw_batch(rows, output, agent=RunnableLambda(lambda value: value),
+                                      compiler_http=compiler, workers=3)
+
+    assert len(outcomes) == 3
+    assert len(snapshots) == 2
+    assert snapshots[0] == ("first",)
+    assert set(snapshots[-1]) == {"first", "second", "third"}
+    for item in rows:
+        case = output / "cases" / hashlib.sha256(item["id"].encode("utf-8")).hexdigest() / "candidate.json"
+        assert json.loads(case.read_text(encoding="utf-8"))["id"] == item["id"]
+
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert report["candidate_snapshot_count"] == 2
+    assert report["candidate_snapshot_wall_seconds"] >= 0
+    assert report["checkpointed_rows"] == 3
+    assert set(report["row_checkpoint_wall_seconds_by_id"]) == {"first", "second", "third"}
+    assert report["row_checkpoint_wall_seconds"] == pytest.approx(
+        sum(report["row_checkpoint_wall_seconds_by_id"].values()), abs=0.00001)
+
+
+def test_draw_batch_coalesces_snapshots_on_fake_30_second_clock(tmp_path, monkeypatch):
+    native = importlib.import_module("agent.workflows.problem_tikz")
+    from agent.schemas.tikz import TikzResult
+
+    now = {"value": 0.0}
+    second_row_printed = Event()
+    first_snapshot_saved = Event()
+    snapshots = []
+    original_save = drawing.save_candidates
+    original_encoded = drawing.encoded
+
+    def fake_draw(*, instruction, current_tikz, artifact_dir, agent, compiler_http):
+        name = instruction.removeprefix("Givens for ")
+        if name == "second":
+            assert first_snapshot_saved.wait(timeout=5)
+        if name == "third":
+            assert second_row_printed.wait(timeout=5)
+        now["value"] = {"first": 1.0, "second": 10.0, "third": 31.0}[name]
+        return TikzResult(success=True, status="accepted", usable=True,
+                          tikz=TIKZ_B, rendered_png_path=preview(artifact_dir))
+
+    def save_and_signal(output, latest):
+        snapshots.append(tuple(latest))
+        original_save(output, latest)
+        if not first_snapshot_saved.is_set():
+            first_snapshot_saved.set()
+
+    def encoded_and_signal(value):
+        if isinstance(value, dict) and set(value) == {"id", "drawing_status"} and value["id"] == "second":
+            second_row_printed.set()
+        return original_encoded(value)
+
+    monkeypatch.setattr(drawing, "perf_counter", lambda: now["value"])
+    monkeypatch.setattr(drawing, "encoded", encoded_and_signal)
+    monkeypatch.setattr(native, "problem_tikz", fake_draw)
+    monkeypatch.setattr(drawing, "save_candidates", save_and_signal)
+    rows = [row("first"), row("second"), row("third")]
+    output = tmp_path / "fake_clock"
+    with httpx.Client() as compiler:
+        outcomes = drawing.draw_batch(rows, output, agent=RunnableLambda(lambda value: value),
+                                      compiler_http=compiler, workers=1)
+
+    assert len(outcomes) == 3
+    assert len(snapshots) == 3
+    assert snapshots[0] == ("first",)
+    assert set(snapshots[1]) == {"first", "second", "third"}
+    assert snapshots[2] == snapshots[1]

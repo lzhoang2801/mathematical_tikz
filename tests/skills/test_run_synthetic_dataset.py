@@ -20,11 +20,14 @@ def test_loop_reuses_edit_targets_and_resume_does_not_repeat_paid_calls(tmp_path
         context = contexts_in[0]
         contexts.append(context)
         assert "target_tikz" not in production.drawing.encoded(context)
-        assert "current_tikz" not in production.drawing.encoded(context)
-        calls.append(context["batch_id"])
         task = context["tasks"][0]
-        index = len(calls)
         base = next(iter(kwargs["bases"].values()), None)
+        if task == "Edit":
+            assert context["available_starts"][0]["current_tikz"] == base["target_tikz"]
+        else:
+            assert "current_tikz" not in production.drawing.encoded(context)
+        calls.append(context["batch_id"])
+        index = len(calls)
         row = {"schema_version": "synthetic-tikz:v2", "id": f"row-{index}", "task": task,
                "instruction": {1: "Triangle with altitude", 2: "Perpendicular feet", 3: "A median"}[index],
                "current_tikz": base["target_tikz"] if base else None,
@@ -35,6 +38,8 @@ def test_loop_reuses_edit_targets_and_resume_does_not_repeat_paid_calls(tmp_path
                "complete_instruction": "Triangle with " + ("feet" if index == 2 else "median") if base else None}}
         output.mkdir(parents=True)
         production.drawing.save_json(output / "batches/scope/result.json", {"status": "completed", "rows": [row]})
+        production.drawing.save_json(output / "supervision.json", {"rows": [
+            {"id": row["id"], "decision": "usable_instruction", "reason": "Approved by test fixture"}]})
         if interrupt_after_author_checkpoint and index == 1:
             raise RuntimeError("interrupted before author snapshot")
         production.author.save_instructions(output, [{"status": "completed", "rows": [row]}], sources)
@@ -85,6 +90,11 @@ def test_loop_reuses_edit_targets_and_resume_does_not_repeat_paid_calls(tmp_path
     prompt = tmp_path / "tools/instruction_prompt.md"
     prompt.parent.mkdir()
     prompt.write_text("Updated author instructions", encoding="utf-8")
+    state = json.loads((args.output / "state.json").read_text(encoding="utf-8"))
+    for name in state["fingerprint"]["harness"]:
+        target = tmp_path / "src/agent" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((production.ROOT / "src/agent" / name).read_bytes())
     monkeypatch.setattr(production, "ROOT", tmp_path)
     production.run(args, model=model, agent=None, compiler=None, trace_client=None)
     state = json.loads((args.output / "state.json").read_text(encoding="utf-8"))
@@ -127,6 +137,10 @@ def test_loop_reuses_edit_targets_and_resume_does_not_repeat_paid_calls(tmp_path
     sources["third"] = {"id": "third", "source_group": "third", "source_text": "Third source"}
     with pytest.raises(ValueError, match="each task quota"):
         production.run(args, model=model, agent=None, compiler=None, trace_client=None)
+    middleware = tmp_path / "src/agent/middleware.py"
+    middleware.write_bytes(middleware.read_bytes() + b"\n# Changed harness\n")
+    with pytest.raises(ValueError, match="Drawing harness/model"):
+        production.run(args, model=model, agent=None, compiler=None, trace_client=None)
 
 
 def test_collect_exclusions_are_task_row_scoped(monkeypatch):
@@ -152,7 +166,7 @@ def test_reconstruct_export_binds_source_image_separately_from_target(tmp_path):
     Image.new("RGB", (8, 8), "white").save(rendered)
     row = {"schema_version": "synthetic-tikz:v2", "id": "reconstruction", "task": "Reconstruct",
            "instruction": None, "current_tikz": None, "target_tikz": target,
-           "source": None, "source_group": None, "grade": None, "diagram_types": None,
+           "source": None, "source_group": None, "grade": 8, "diagram_types": ["G03"],
            "split": None, "provenance": None,
            "image": {"path": str(original), "sha256": hashlib.sha256(original.read_bytes()).hexdigest()},
            "rendered_png_path": str(rendered), "rendered_tikz_sha256": hashlib.sha256(target.encode()).hexdigest(),
@@ -164,7 +178,10 @@ def test_reconstruct_export_binds_source_image_separately_from_target(tmp_path):
     saved = pq.read_table(next(iter(files))).to_pylist()[0]
     assert saved["image"]["bytes"] == original.read_bytes()
     assert saved["tikz_image"]["bytes"] == rendered.read_bytes()
-    assert saved["instruction"] is None and saved["diagram_types"] is None
+    metadata = json.loads(saved["metadata"])
+    assert saved["instruction"] is None
+    assert metadata["grade"] == row["grade"]
+    assert metadata["diagram_types"] == row["diagram_types"]
     production.write_rows(tmp_path / "reconstruct.jsonl", [row])
     assert drawing.load_rows(tmp_path / "reconstruct.jsonl")[0]["instruction"] is None
     Image.new("RGB", (8, 8), "blue").save(original)
@@ -189,7 +206,8 @@ def test_context_batch_samples_five_or_ten_inputs_before_reusing_sources(monkeyp
 
     monkeypatch.setattr(production, "completed", lambda row: True)
     latest = {f"base-{i}": {"id": f"base-{i}", "task": "Generate", "instruction": f"Base givens {i}",
-                           "source_group": f"group-{i}", "provenance": {"parents": [f"source-{i}"]}}
+                           "target_tikz": f"base code {i}", "source_group": f"group-{i}",
+                           "provenance": {"parents": [f"source-{i}"]}}
               for i in range(20)}
     state["base_count"] = 20
     context, bases = production.make_context(sources, latest, [], state, 50, 10)
@@ -199,7 +217,31 @@ def test_context_batch_samples_five_or_ten_inputs_before_reusing_sources(monkeyp
     assert context["tasks"] == ["Edit"]
     assert "base-0" not in bases
     payload = production.author.author_payload(context)
-    assert len(payload) == 10 and all(set(row) == {"source", "givens"} for row in payload)
+    assert len(payload) == 10 and all(set(row) == {"source", "givens", "current_tikz"} for row in payload)
+    assert all(row["current_tikz"] == bases[row["source"]]["target_tikz"] for row in payload)
+
+
+def test_legacy_pending_edit_context_is_hydrated_from_exact_saved_base():
+    source = {"id": "source", "source_group": "family", "source_text": "source givens"}
+    base = {"id": "base-id", "task": "Generate", "instruction": "Base givens",
+            "target_tikz": r"\begin{tikzpicture}\end{tikzpicture}",
+            "source_group": "family", "split": None, "provenance": {"parents": ["source"]}}
+    legacy = {"batch_id": "pending", "seed": 1, "rows_requested": 1, "tasks": ["Edit"],
+              "requested_counts": {"Edit": 1}, "sources": [source],
+              "available_starts": [{"id": "base-id", "instruction": "Base givens",
+                                    "source_group": "family", "parents": ["source"],
+                                    "grade": None, "diagram_types": []}],
+              "existing_instructions": [], "request": "bounded"}
+    context = production.hydrate_edit_starts(legacy, {"base-id": base})
+    assert "current_tikz" not in legacy["available_starts"][0]
+    assert context["available_starts"][0]["current_tikz"] == base["target_tikz"]
+    assert production.author.author_payload(context) == [
+        {"source": "base-id", "givens": "Base givens", "current_tikz": base["target_tikz"]}]
+    production.author.validate_contexts([context], {"source": source}, {"base-id": base})
+
+    stale = {**legacy, "available_starts": [{**legacy["available_starts"][0], "current_tikz": "stale code"}]}
+    with pytest.raises(ValueError, match="does not match"):
+        production.hydrate_edit_starts(stale, {"base-id": base})
 
 
 def test_author_failure_stops_and_resume_retries_the_same_context(tmp_path, monkeypatch):
@@ -229,6 +271,78 @@ def test_author_failure_stops_and_resume_retries_the_same_context(tmp_path, monk
     assert len(calls) == 2 and calls[0] == calls[1]
 
 
+def test_instruction_review_gate_holds_paid_response_then_resume_draws_only_usable(tmp_path, monkeypatch):
+    sources = {"source": {"id": "source", "source_group": "family", "source_text": "source givens"}}
+    monkeypatch.setattr(production.author, "load_pool", lambda path: (sources, [], {}))
+    author_calls, drawing_calls = [], []
+    rows = [
+        {"schema_version": "synthetic-tikz:v2", "id": "usable", "task": "Generate",
+         "instruction": "Triangle ABC has AB = AC.", "current_tikz": None, "source": "source",
+         "source_group": "family", "split": None, "grade": 8, "diagram_types": ["G03"],
+         "provenance": {"parents": ["source"]}},
+        {"schema_version": "synthetic-tikz:v2", "id": "revise", "task": "Generate",
+         "instruction": "Triangle DEF has DE = DF.", "current_tikz": None, "source": "source",
+         "source_group": "family", "split": None, "grade": 8, "diagram_types": ["G03"],
+         "provenance": {"parents": ["source"]}},
+    ]
+
+    def propose(contexts, output, **kwargs):
+        author_calls.append(contexts)
+        checkpoint = {"status": "completed", "rows": rows}
+        production.drawing.save_json(output / "batches/scope/result.json", checkpoint)
+        production.drawing.save_json(output / "supervision.json", {"rows": [
+            {"id": "usable", "decision": "usable_instruction", "reason": "Complete self-contained givens."}]})
+        return production.author.save_instructions(output, [checkpoint], sources)
+
+    def draw(rows_to_draw, output, **kwargs):
+        outcomes = []
+        for row in rows_to_draw:
+            drawing_calls.append(row["id"])
+            target = r"\begin{tikzpicture}\coordinate (A) at (0,0);\end{tikzpicture}"
+            image = output / "cases" / row["id"] / "target.png"
+            image.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (8, 8), "white").save(image)
+            result = {**row, "success": True, "target_tikz": target, "drawing_status": "accepted",
+                      "rendered_png_path": str(image),
+                      "rendered_tikz_sha256": hashlib.sha256(target.encode()).hexdigest(),
+                      "rendered_png_sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                      "verification": {"status": "candidate", "reviewed_by": None}}
+            production.drawing.save_json(output / "cases" / row["id"] / "candidate.json", result)
+            outcomes.append(result)
+        return outcomes
+
+    monkeypatch.setattr(production.author, "generate", propose)
+    monkeypatch.setattr(production.drawing, "draw_batch", draw)
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    args = SimpleNamespace(output=tmp_path / "run", sources=Path("unused"), seed=42, base_count=2,
+                           generate=2, edit=0, resume=False, max_draw_attempts=4, max_author_calls=4,
+                           batch_size=2, contexts_per_call=2, workers=1, max_model_calls=4, compiler_concurrency=1)
+    model = SimpleNamespace(model_name="test-double")
+
+    first = production.run(args, model=model, agent=None, compiler=None, trace_client=None)
+    state_path = args.output / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    authored = Path(state["pending"]).parent / "author"
+    assert first["status"] == "instruction_review_required"
+    assert first["instruction_review_pending"] == 1
+    assert first["drawing_attempts_reserved"] == 1
+    assert state["pending"] and len(author_calls) == 1 and drawing_calls == ["usable"]
+    assert [row["id"] for row in production.author.jsonl(authored / "instructions.jsonl")] == ["usable", "revise"]
+
+    production.drawing.save_json(authored / "supervision.json", {"rows": [
+        {"id": "usable", "decision": "usable_instruction", "reason": "Complete self-contained givens."},
+        {"id": "revise", "decision": "usable_instruction", "reason": "Complete self-contained givens."}]})
+    args.resume = True
+    resumed = production.run(args, model=model, agent=None, compiler=None, trace_client=None)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed["status"] == "candidate_quota_met"
+    assert resumed["instruction_review_pending"] == 0
+    assert resumed["completed_candidates"] == {"Generate": 2, "Edit": 0}
+    assert len(author_calls) == 1  # Resume reused the completed paid author checkpoint.
+    assert drawing_calls == ["usable", "revise"]  # The first completed render was not repeated.
+    assert state["pending"] is None
+
+
 def test_full_coverage_uses_missing_records_beyond_base_floor_and_reaches_both_exports(monkeypatch):
     monkeypatch.setattr(production, "completed", lambda row: row.get("success", True))
     sources = {key: {"id": key, "source_group": group, "source_text": key}
@@ -253,7 +367,8 @@ def test_full_coverage_uses_missing_records_beyond_base_floor_and_reaches_both_e
     state["edit"] = 3
     context, bases = production.make_context(sources, latest, history, state, 1, 10)
     assert context["tasks"] == ["Edit"] and list(bases) == ["base-copy"]
-    assert set(production.author.author_payload(context)[0]) == {"source", "givens"}
+    assert set(production.author.author_payload(context)[0]) == {"source", "givens", "current_tikz"}
+    assert production.author.author_payload(context)[0]["current_tikz"] == bases["base-copy"]["target_tikz"]
     # Once covered, the original sources stay in the same active pool.
     latest["edit-copy"] = {**latest["edit-used"], "id": "edit-copy", "instruction": "Auxiliary copy",
         "provenance": {"parents": ["copy"], "starting_record_id": "base-copy"}}

@@ -118,3 +118,32 @@ def test_cli_prints_summary_and_signals_errors(tmp_path, monkeypatch, capsys):
         batch.main()
     assert error.value.code == 1
     assert json.loads(capsys.readouterr().out)['overall']['scored'] == 0
+
+def test_partial_results_use_a_separate_denominator_for_each_metric(tmp_path, monkeypatch):
+    from evaluation.evaluator import EvaluationError
+    source,destination = tmp_path/'predictions.jsonl',tmp_path/'scores.jsonl'
+    write_predictions(source,[prediction(index=0),prediction(index=1)])
+    partial = dict(compile=1,mathematical_correctness=None,content_coverage=None,visual_readability=100.0)
+    monkeypatch.setattr(batch,'evaluate',Mock(side_effect=[SCORES,EvaluationError('unsupported reference',partial)]))
+    summary = batch.evaluate_file(source,destination)
+    assert read_rows(destination)[1]['scores'] == partial
+    assert summary['overall']['scored'] == 1
+    assert summary['overall']['scored_by_metric'] == dict(compile=2,mathematical_correctness=1,content_coverage=1,visual_readability=2)
+    assert summary['overall']['mean_scores'] == dict(compile=1,mathematical_correctness=80,content_coverage=100,visual_readability=80)
+
+
+def test_caller_owned_native_transport_reuses_batch_error_and_identity_handling(tmp_path, monkeypatch):
+    source, destination = tmp_path / 'predictions.jsonl', tmp_path / 'scores.jsonl'
+    rows = [prediction(index=0), prediction(index=1)]
+    write_predictions(source, rows)
+    native = Mock(side_effect=[SCORES, batch.EvaluationError('partial native evidence', {
+        'compile': 1, 'mathematical_correctness': None, 'content_coverage': None, 'visual_readability': 60,
+    })])
+    remote = Mock(side_effect=AssertionError('Notebook must use the supplied native transport'))
+    monkeypatch.setattr(batch, 'evaluate', remote)
+    summary = batch.evaluate_file(source, destination, evaluator=native)
+    assert native.call_args_list == [((r['target_tikz'], r['output_tikz']),) for r in rows]
+    remote.assert_not_called()
+    assert summary['overall']['scored_by_metric']['compile'] == 2
+    assert summary['overall']['scored_by_metric']['mathematical_correctness'] == 1
+    assert read_rows(destination)[1]['scores']['mathematical_correctness'] is None

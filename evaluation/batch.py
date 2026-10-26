@@ -3,29 +3,34 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from collections.abc import Callable
 import json
 from pathlib import Path
 
-from evaluation.evaluator import evaluate
+from evaluation.evaluator import EvaluationError, EvaluationInfrastructureError, evaluate
 
 METRICS = ('compile', 'mathematical_correctness', 'content_coverage', 'visual_readability')
 
 
 def _aggregate(rows: list[dict]) -> dict:
     scored = [row['scores'] for row in rows if row['status'] == 'scored']
+    values = {metric: [row['scores'][metric] for row in rows
+                       if row.get('scores') and row['scores'].get(metric) is not None] for metric in METRICS}
     return {
         'rows': len(rows),
         'scored': len(scored),
         'errors': dict(Counter(row['status'] for row in rows if row['status'] != 'scored')),
+        'scored_by_metric': {metric: len(items) for metric, items in values.items()},
         'mean_scores': {
-            metric: sum(scores[metric] for scores in scored) / len(scored) if scored else None
+            metric: sum(values[metric]) / len(values[metric]) if values[metric] else None
             for metric in METRICS
         },
     }
 
 
-def evaluate_file(predictions: Path, results: Path) -> dict:
+def evaluate_file(predictions: Path, results: Path, *, evaluator: Callable[[str, str], dict] | None = None) -> dict:
     """Keep every row, flush results incrementally, and stop on unavailable infrastructure."""
+    evaluate_pair = evaluate if evaluator is None else evaluator
     predictions, results = Path(predictions), Path(results)
     summary_path = results.with_suffix('.summary.json')
     if len({path.resolve() for path in (predictions, results, summary_path)}) != 3:
@@ -58,7 +63,11 @@ def evaluate_file(predictions: Path, results: Path) -> dict:
                     record.update(status='invalid_record', error=str(error), scores=None)
                 else:
                     try:
-                        scores = evaluate(row['target_tikz'], row['output_tikz'])
+                        scores = evaluate_pair(row['target_tikz'], row['output_tikz'])
+                    except EvaluationInfrastructureError as error:
+                        record.update(status='infrastructure_error', error=str(error), scores=error.scores)
+                    except EvaluationError as error:
+                        record.update(status='evaluation_error', error=str(error), scores=error.scores)
                     except ValueError as error:
                         record.update(status='evaluation_error', error=str(error), scores=None)
                     except RuntimeError as error:

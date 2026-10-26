@@ -37,8 +37,10 @@ from tools.draw_instruction import (
 DEFAULT_SELECTION = ROOT / "dataset/audit_givens/selection.jsonl"
 PROMPT_PATH = ROOT / "tools/instruction_prompt.md"
 SCHEMA_VERSION = "synthetic-tikz:v2"
-PROMPT_VERSION = "synthetic-tikz-instructions:v13"
+PROMPT_VERSION = "synthetic-tikz-instructions:v17"
 AUTHOR_CALLS_PER_CONTEXT = 1
+EXCLUDED_SOURCES_PATH = ROOT / "dataset/synthetic/instructions/excluded-sources.json"
+EXCLUDED_INSTRUCTIONS_PATH = ROOT / "dataset/synthetic/instructions/excluded-instructions.json"
 CORPUS = ROOT.parent / "curriculum_grounding/curriculums"
 
 
@@ -57,6 +59,15 @@ class InstructionBatch(BaseModel):
 
 def jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+
+
+def excluded_source_ids() -> set[str]:
+    if not EXCLUDED_SOURCES_PATH.is_file():
+        return set()
+    values = json.loads(EXCLUDED_SOURCES_PATH.read_text(encoding="utf-8"))
+    if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
+        raise ValueError("Source exclusions must be a JSON list of nonempty source IDs")
+    return set(values)
 
 
 def parse_instruction_json_text(content: str) -> InstructionBatch:
@@ -168,8 +179,6 @@ def load_pool(selection_path: Path = DEFAULT_SELECTION) -> tuple[dict[str, dict]
                 source_text = raw_text
                 if source_text.strip() != row.get("source_text", "").strip():
                     raise ValueError(f"Stale source manifest text: {key}")
-        if not isinstance(selection.get("source_group"), str) or not selection["source_group"].strip():
-            raise ValueError(f"Selected source needs source_group: {key}")
         manifest_types = row.get("diagram_types") or []
         geometry_types = {f"G{number:02d}" for number in range(1, 18)}
         audited_types = selection.get("diagram_types")
@@ -177,15 +186,12 @@ def load_pool(selection_path: Path = DEFAULT_SELECTION) -> tuple[dict[str, dict]
         codes = audited_types if audited_types is not None else manifest_codes
         if codes == []:
             codes = None
-        if (codes is not None and (not isinstance(codes, list)
-                                   or any(not isinstance(code, str) or code not in geometry_types for code in codes))):
-            raise ValueError(f"Selected source needs geometry diagram types: {key}")
         source = {**row, **selection, "id": key, "source_text": source_text,
                   "source_md": row["source_md"], "source_path": row["source_md"],
                   "manifest_diagram_types": manifest_types,
                   "audited_diagram_types": audited_types,
                   "diagram_types": codes,
-                  "source_group": selection["source_group"],
+                  "source_group": selection.get("source_group") or key,
                   "source": (f"{source_path}:p{locator['page']} ({key})" if lines is None
                              else f"{source_path}:L{start}-{end} ({key})"),
                   "source_sha256": file_digest,
@@ -233,11 +239,16 @@ def build_contexts(sources: dict[str, dict], batches: list[dict], *, calls: int,
     allowed_source_ids = set(sources if source_ids is None else source_ids)
     if allowed_source_ids - sources.keys():
         raise ValueError("Source scope contains unknown IDs")
+    excluded = excluded_source_ids()
+    if source_ids is not None and allowed_source_ids & excluded:
+        raise ValueError("Source scope includes user-excluded source IDs")
+    allowed_source_ids.difference_update(excluded)
     if task in ("Edit", "both") and not bases:
         raise ValueError("Edit instruction authoring requires explicit checked bases")
     eligible_ids = sorted({key for batch in batches for key in batch["problem_ids"]} & allowed_source_ids)
     eligible_bases = [base for base in bases.values() if base.get("task") == "Generate"
                       and base.get("split") not in ("validation", "test")
+                      and isinstance(base.get("target_tikz"), str) and base["target_tikz"].strip()
                       and base.get("provenance", {}).get("parents")
                       and set(base["provenance"]["parents"]) <= set(eligible_ids)]
     if not eligible_ids or (task in ("Edit", "both") and not eligible_bases):
@@ -277,6 +288,7 @@ def build_contexts(sources: dict[str, dict], batches: list[dict], *, calls: int,
                 if (base.get("task") == "Generate" and base.get("split") not in ("validation", "test")
                         and parents and set(parents) <= ids):
                     available_starts.append({"id": base_id, "instruction": base["instruction"],
+                                             "current_tikz": base["target_tikz"],
                                              "source_group": base["source_group"], "parents": parents,
                                              "grade": base.get("grade"), "diagram_types": base.get("diagram_types", [])})
         contexts.append({"batch_id": f"mixed-{index:04d}", "seed": seed + index,
@@ -296,16 +308,38 @@ def instruction_key(row: dict) -> tuple:
     return row["task"], *(" ".join(unicodedata.normalize("NFC", value or "").split()) for value in values)
 
 
+def excluded_instruction_cases() -> set[tuple]:
+    if not EXCLUDED_INSTRUCTIONS_PATH.is_file():
+        return set()
+    rows = json.loads(EXCLUDED_INSTRUCTIONS_PATH.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict) or row.get("task") not in {"Generate", "Edit"}
+        or not isinstance(row.get("instruction"), str) or not row["instruction"].strip()
+        or not isinstance(row.get("parents"), list) or not row["parents"]
+        or any(not isinstance(parent, str) or not parent.strip() for parent in row["parents"])
+        for row in rows
+    ):
+        raise ValueError("Instruction exclusions require task, text and exact source parents")
+    return {instruction_key(row)[:2] + (tuple(sorted(row["parents"])),) for row in rows}
+
+
 def author_payload(context: dict) -> list[dict]:
     """Project rich, verified local context into the only fields sent to the model."""
     tasks = set(context["tasks"])
     payload = []
     if "Generate" in tasks:
-        payload.extend({"source": source["id"], "source_text": source["source_text"]}
-                       for source in context["sources"]
-                       if "generate_source_ids" not in context or source["id"] in context["generate_source_ids"])
+        for source in context["sources"]:
+            if "generate_source_ids" in context and source["id"] not in context["generate_source_ids"]:
+                continue
+            field = "source_text" if source.get("source_text") else "givens"
+            item = {"source": source["id"], field: source[field]}
+            for field_name in ("givens", "auxiliaries"):
+                if source.get(field_name):
+                    item[field_name] = source[field_name]
+            payload.append(item)
     if "Edit" in tasks:
-        payload.extend({"source": base["id"], "givens": base["instruction"]}
+        payload.extend({"source": base["id"], "givens": base["instruction"],
+                        "current_tikz": base["current_tikz"]}
                        for base in context.get("available_starts", []))
     return payload
 
@@ -317,6 +351,7 @@ def case_key(row: dict) -> tuple:
 
 def materialize(batch: InstructionBatch, context: dict, digest: str, trace_id: str, bases: dict[str, dict]) -> tuple[list[dict], list[dict]]:
     rows, rejected = [], []
+    excluded_cases = excluded_instruction_cases()
     available = {source["id"]: source for source in context["sources"]}
     available_starts = {start["id"] for start in context.get("available_starts", [])}
     known_cases = {instruction_key({"task": previous["task"], "instruction": previous["instruction"],
@@ -343,12 +378,14 @@ def materialize(batch: InstructionBatch, context: dict, digest: str, trace_id: s
                 base = bases.get(item.source)
                 if not base or base.get("task") != "Generate" or base.get("split") in ("validation", "test"):
                     raise ValueError("Edit base ID does not resolve to an eligible Generate row")
+                repeated = instruction_key({"task": "Generate", "instruction": item.instruction, "current_tikz": None})
+                if repeated == instruction_key({"task": "Generate", "instruction": base["instruction"], "current_tikz": None}):
+                    raise ValueError("Edit repeats the complete starting instruction instead of a new auxiliary")
                 parent_ids = base.get("provenance", {}).get("parents", [])
                 if not parent_ids or not set(parent_ids) <= available.keys():
                     raise ValueError("Edit base parents are outside the supplied audited source scope")
                 parents = [available[key] for key in parent_ids]
 
-            grades = {parent.get("grade") for parent in parents}
             current = None
             if item.task == "Edit":
                 current = base.get("target_tikz")
@@ -360,16 +397,11 @@ def materialize(batch: InstructionBatch, context: dict, digest: str, trace_id: s
                           "source_text_sha256": parent.get("source_text_sha256"),
                           "locator": parent.get("locator", {"record_id": parent["id"],
                               "start_line": parent.get("start_line"), "end_line": parent.get("end_line")}),
-                          "source_kind": parent.get("source_kind"), "book": parent.get("book"),
-                          "book_role": parent.get("book_role"), "image_paths": parent.get("image_paths", []),
-                          "diagram_types": parent.get("diagram_types"),
-                          "source_group": parent["source_group"], "family": parent.get("family")}
+                          }
                           for parent in parents}
-            distinct = {}
-            for key in ("source_kind", "book", "book_role"):
-                values = {parent.get(key) for parent in parents}
-                distinct[key] = next(iter(values)) if len(values) == 1 else None
             parent_ids = [parent["id"] for parent in parents]
+            if instruction_key({"task": item.task, "instruction": item.instruction})[:2] + (tuple(sorted(parent_ids)),) in excluded_cases:
+                raise ValueError("Instruction matches a user-excluded case for these source parents")
             provenance = {"parents": parent_ids,
                           "complete_instruction": item.complete_instruction, "trace_id": trace_id,
                           "context_sha256": digest, "parent_sources": source_refs,
@@ -381,15 +413,8 @@ def materialize(batch: InstructionBatch, context: dict, digest: str, trace_id: s
                       "id": str(uuid5(NAMESPACE_URL, digest + encoded(item.model_dump()))), "task": item.task,
                       "instruction": item.instruction, "current_tikz": current,
                       "source": "; ".join(parent["source"] for parent in parents),
-                      "source_path": parents[0].get("source_path", parents[0].get("source_md")),
-                      "source_location": source_refs[parents[0]["id"]]["locator"],
-                       "source_kind": distinct["source_kind"], "book": distinct["book"],
-                       "book_role": distinct["book_role"],
-                      "image_paths": list(dict.fromkeys(path for parent in parents for path in parent.get("image_paths", []))),
                       "source_group": base.get("source_group") if base else parents[0]["source_group"],
                       "split": base.get("split") if base else None,
-                      "grade": (base.get("grade") if base else grades.pop() if len(grades) == 1 else None),
-                      "diagram_types": None,
                       "provenance": provenance,
                       "verification": {"status": "candidate", "reviewed_by": None}}
             exact_key = instruction_key(record)
@@ -403,13 +428,16 @@ def materialize(batch: InstructionBatch, context: dict, digest: str, trace_id: s
 
 
 def validate_contexts(contexts: list[dict], sources: dict[str, dict], bases: dict[str, dict]) -> None:
-    allowed_start_fields = {"id", "instruction", "source_group", "parents", "grade", "diagram_types"}
+    allowed_start_fields = {"id", "instruction", "current_tikz", "source_group", "parents", "grade", "diagram_types"}
+    excluded = excluded_source_ids()
     for context in contexts:
         task_set = set(context.get("tasks", []))
         if not task_set or task_set - {"Generate", "Edit"}:
             raise ValueError("Context has an invalid task scope")
         selected = context.get("sources", [])
         source_ids = {row.get("id") for row in selected}
+        if source_ids & excluded:
+            raise ValueError("Context includes a user-excluded source")
         if not selected or source_ids - sources.keys():
             raise ValueError("Context sources are empty or outside the audited pool")
         if any(row != sources[row["id"]] for row in selected):
@@ -426,6 +454,8 @@ def validate_contexts(contexts: list[dict], sources: dict[str, dict], bases: dic
             base = bases.get(start["id"])
             if (not base or base.get("task") != "Generate" or base.get("split") in ("validation", "test")
                     or base.get("instruction") != start["instruction"]
+                    or not isinstance(start.get("current_tikz"), str) or not start["current_tikz"].strip()
+                    or base.get("target_tikz") != start["current_tikz"]
                     or base.get("source_group") != start["source_group"]
                     or base.get("provenance", {}).get("parents") != start["parents"]
                     or not set(start["parents"]) <= source_ids):
@@ -485,14 +515,25 @@ def save_instructions(output: Path, checkpoints: list[dict], sources: dict[str, 
     review_path = output / "supervision.json"
     review = json.loads(review_path.read_text(encoding="utf-8")) if review_path.is_file() else {"rows": []}
     by_id = {row["id"]: row for record in checkpoints if record["status"] == "completed" for row in record["rows"]}
+    reviewed = set()
+    usable = set()
     held = set()
     for decision in review["rows"]:
-        if (decision["id"] not in by_id or decision["decision"] not in ("usable_instruction", "needs_revision")
+        if (decision["id"] not in by_id
+                or decision["decision"] not in ("usable_instruction", "needs_revision", "needs_review")
                 or not isinstance(decision.get("reason"), str) or not decision["reason"].strip()):
             raise ValueError("Supervision must identify an existing instruction, decision and reason")
-        if decision["decision"] == "needs_revision":
+        reviewed.add(decision["id"])
+        if decision["decision"] == "usable_instruction":
+            usable.add(case_key(by_id[decision["id"]]))
+        if decision["decision"] in ("needs_revision", "needs_review"):
             held.add(case_key(by_id[decision["id"]]))
-    eligible = [row for row in rows if case_key(row) not in held]
+    excluded = excluded_source_ids()
+    excluded_cases = excluded_instruction_cases()
+    blocked = {case_key(row) for row in rows if set(row["provenance"]["parents"]) & excluded
+               or instruction_key(row)[:2] + (tuple(sorted(row["provenance"]["parents"])),) in excluded_cases}
+    eligible = [row for row in rows if case_key(row) in usable and case_key(row) not in held and case_key(row) not in blocked]
+    instruction_review_pending = len(set(by_id) - reviewed)
     save_json(output / "source-groups.json", {key: groups[find(key)] for key in sources})
     caller_inputs = {"Generate": [row for row in eligible if row["task"] == "Generate"],
                      "Edit": [row for row in eligible if row["task"] == "Edit" and row["current_tikz"]]}
@@ -511,7 +552,9 @@ def save_instructions(output: Path, checkpoints: list[dict], sources: dict[str, 
                "sources_used": len(used_sources),
                "loaded_sources": len(sources),
                "rejected_instructions": sum(len(result.get("rejected", [])) for result in checkpoints),
+               "user_excluded_instructions": len(blocked),
                "review_held_instructions": len(held), "caller_inputs": {task: len(items) for task, items in caller_inputs.items()},
+               "instruction_review_pending": instruction_review_pending,
                "edit_awaiting_starting_tikz": sum(row["task"] == "Edit" and not row["current_tikz"] for row in eligible),
                "mathematical_review": ("see supervision.json; unreviewed proposals remain pending" if review_path.is_file()
                                        else "pending; schema/source checks are not mathematical approval")}
